@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -11,7 +11,10 @@ import { api, ApiError } from '../services/api';
 
 vi.mock('../services/api', async (importOriginal) => {
   const original = await importOriginal();
-  return { ...original, api: { health: vi.fn(), ready: vi.fn() } };
+  return {
+    ...original,
+    api: { health: vi.fn(), ready: vi.fn(), listPlans: vi.fn(), listRuns: vi.fn() },
+  };
 });
 afterEach(() => {
   cleanup();
@@ -31,6 +34,10 @@ function renderApp(path = '/') {
   );
 }
 describe('dashboard', () => {
+  beforeEach(() => {
+    api.listPlans.mockResolvedValue({ plans: [] });
+    api.listRuns.mockResolvedValue({ runs: [] });
+  });
   it('shows initial loading then real successful connection results', async () => {
     api.health.mockResolvedValue({ status: 'ok' });
     api.ready.mockResolvedValue({ status: 'ready' });
@@ -38,7 +45,7 @@ describe('dashboard', () => {
     expect(screen.getByRole('button', { name: 'Checking services…' })).toBeDisabled();
     expect(await screen.findByText('All systems ready')).toBeInTheDocument();
     expect(screen.getAllByText('Connected')).toHaveLength(2);
-    expect(screen.getByText('Test creation arrives in a future phase.')).toBeInTheDocument();
+    expect(screen.getByText('No runs yet')).toBeInTheDocument();
   });
   it('shows failures and lets the user retry successfully', async () => {
     api.health.mockRejectedValue(new ApiError('Cannot reach the API.'));

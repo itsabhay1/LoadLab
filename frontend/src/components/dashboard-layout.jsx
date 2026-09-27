@@ -6,7 +6,6 @@ import {
   FlaskConical,
   Gauge,
   History,
-  Layers3,
   Menu,
   Moon,
   Sun,
@@ -75,27 +74,32 @@ export function DashboardLayout() {
               <Gauge size={18} />
               Overview
             </NavLink>
-            {[
-              ['Load tests', FlaskConical],
-              ['Test history', History],
-              ['Comparisons', Layers3],
-            ].map(([label, Icon]) => (
-              <div key={label} className="nav-item nav-planned" aria-disabled="true">
-                <Icon size={18} />
-                {label}
-                <span>Planned</span>
-              </div>
-            ))}
+            <NavLink
+              to="/plans"
+              onClick={() => setMenuOpen(false)}
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+            >
+              <FlaskConical size={18} />
+              Test plans
+            </NavLink>
+            <NavLink
+              to="/history"
+              onClick={() => setMenuOpen(false)}
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+            >
+              <History size={18} />
+              Run history
+            </NavLink>
           </nav>
           <div className="sidebar-bottom">
             <div className="phase-note">
-              <span className="eyebrow">BUILDING THE FOUNDATION</span>
-              <strong>Small steps. Solid systems.</strong>
-              <p>Phase 1 connects your workspace to the services behind it.</p>
+              <span className="eyebrow">LIVE LOAD TESTING</span>
+              <strong>Local, controlled and observable.</strong>
+              <p>Run safe mock-server tests and inspect aggregate metrics live.</p>
               <div className="phase-track">
                 <span />
               </div>
-              <span className="text-xs text-muted-foreground">Phase 1 · Foundation</span>
+              <span className="text-xs text-muted-foreground">Phase 4 · Dashboard</span>
             </div>
             <NavLink className="nav-item" to="/setup" onClick={() => setMenuOpen(false)}>
               <BookOpen size={18} />
@@ -113,7 +117,7 @@ export function DashboardLayout() {
           <div className="breadcrumb">
             Workspace
             <ChevronRight size={14} />
-            <span>Foundation</span>
+            <span>Performance workspace</span>
           </div>
           <div className="header-actions">
             <span className="environment-badge">

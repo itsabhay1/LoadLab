@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   disconnectDatabase: vi.fn(),
   recoverInterruptedRuns: vi.fn(),
   createServer: vi.fn(),
+  createSocketServer: vi.fn(),
+  closeSocketServer: vi.fn(),
   logger: { info: vi.fn(), error: vi.fn(), fatal: vi.fn() },
 }));
 vi.mock('node:process', () => ({ default: mocks.process }));
@@ -32,6 +34,7 @@ vi.mock('../config/logger.js', async (importOriginal) => ({
 vi.mock('../services/test-runner.js', () => ({
   recoverInterruptedRuns: mocks.recoverInterruptedRuns,
 }));
+vi.mock('../config/socket.js', () => ({ createSocketServer: mocks.createSocketServer }));
 
 let signals;
 let server;
@@ -43,6 +46,8 @@ beforeEach(() => {
   mocks.connectDatabase.mockReset().mockResolvedValue();
   mocks.disconnectDatabase.mockReset().mockResolvedValue();
   mocks.recoverInterruptedRuns.mockReset().mockResolvedValue(0);
+  mocks.closeSocketServer.mockReset().mockResolvedValue();
+  mocks.createSocketServer.mockReset().mockReturnValue({ close: mocks.closeSocketServer });
   server = new EventEmitter();
   server.listening = false;
   server.listen = vi.fn((_port, _host, done) => {
@@ -76,6 +81,7 @@ describe('server startup and shutdown', () => {
       server.listen.mock.invocationCallOrder[0],
     );
     expect(server.listen).toHaveBeenCalledWith(5000, '127.0.0.1', expect.any(Function));
+    expect(mocks.createSocketServer).toHaveBeenCalledWith(server, mocks.config);
     expect(server).toMatchObject({
       requestTimeout: 15000,
       headersTimeout: 10000,
@@ -94,6 +100,7 @@ describe('server startup and shutdown', () => {
       expect(app.locals.shuttingDown).toBe(true);
       await vi.waitFor(() => expect(mocks.process.exit).toHaveBeenCalledWith(0));
       expect(server.close).toHaveBeenCalledOnce();
+      expect(mocks.closeSocketServer).toHaveBeenCalledOnce();
       expect(server.closeIdleConnections).toHaveBeenCalledOnce();
       expect(mocks.disconnectDatabase).toHaveBeenCalledOnce();
       expect(server.close.mock.invocationCallOrder[0]).toBeLessThan(
@@ -172,6 +179,7 @@ describe('server startup and shutdown', () => {
     });
     signals.emit('SIGTERM');
     signals.emit('unhandledRejection', new Error('fatal'));
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
     finish();
     await vi.waitFor(() => expect(mocks.process.exit).toHaveBeenCalledWith(1));
     expect(server.close).toHaveBeenCalledOnce();

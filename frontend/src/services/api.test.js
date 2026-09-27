@@ -74,4 +74,45 @@ describe('API client', () => {
     controller.abort();
     await expect(result).rejects.toMatchObject({ name: 'AbortError' });
   });
+
+  it('sends plan mutations and execution requests to the REST API', async () => {
+    const plan = {
+      _id: '507f1f77bcf86cd799439011',
+      name: 'Smoke test',
+      targetUrl: 'http://127.0.0.1:5050/fast',
+      virtualUsers: 10,
+      durationMs: 10000,
+      rampUpMs: 1000,
+      requestTimeoutMs: 3000,
+      maxConnections: 10,
+      requestsPerSecond: 100,
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ plan }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ runId: '507f1f77bcf86cd799439012', status: 'QUEUED' }), {
+          status: 202,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    const client = createApiClient({ baseUrl: 'http://localhost:5000', fetchImpl });
+    await expect(client.createPlan(plan)).resolves.toEqual({ plan });
+    await expect(client.startRun(plan._id)).resolves.toMatchObject({ status: 'QUEUED' });
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      'http://localhost:5000/api/v1/plans',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(plan) }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      `http://localhost:5000/api/v1/plans/${plan._id}/runs`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
 });

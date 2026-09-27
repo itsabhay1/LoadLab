@@ -6,10 +6,12 @@ import { createApp } from './app.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { parseEnv } from './config/env.js';
 import { errorKind, logger } from './config/logger.js';
+import { createSocketServer } from './config/socket.js';
 import { recoverInterruptedRuns } from './services/test-runner.js';
 
 let app;
 let server;
+let socketServer;
 let stopping = false;
 let exitCode = 0;
 
@@ -27,6 +29,7 @@ export async function shutdown(reason, code = 0) {
   }, 10000);
 
   try {
+    if (socketServer) await socketServer.close();
     if (server?.listening) {
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -85,6 +88,7 @@ export async function startServer() {
 
     stage = 'listen';
     server = createServer(app);
+    socketServer = createSocketServer(server, config);
     server.requestTimeout = 15000;
     server.headersTimeout = 10000;
     server.keepAliveTimeout = 5000;

@@ -84,7 +84,7 @@ async function runner() {
 describe('test runner persistence', () => {
   it('persists queued, running, snapshots and completed states', async () => {
     mocks.runLoadTest.mockImplementation(async ({ onSnapshot }) => {
-      await onSnapshot({ totalRequests: 5, runtime: { peakRssMb: 50 } });
+      await onSnapshot({ totalRequests: 5, elapsedMs: 5_000, runtime: { peakRssMb: 50 } });
       return metrics;
     });
     const service = await runner();
@@ -105,6 +105,27 @@ describe('test runner persistence', () => {
           snapshots: expect.objectContaining({ $slice: -60 }),
         }),
       }),
+    );
+    expect(mocks.runLoadTest).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshotIntervalMs: 1_000 }),
+    );
+  });
+
+  it('broadcasts one-second aggregates while persisting at five-second intervals', async () => {
+    mocks.runLoadTest.mockImplementation(async ({ onSnapshot }) => {
+      await onSnapshot({ totalRequests: 2, elapsedMs: 1_000 });
+      await onSnapshot({ totalRequests: 12, elapsedMs: 5_000 });
+      return metrics;
+    });
+    const service = await runner();
+    const updates = [];
+    service.testRunEvents.on('run:update', (update) => updates.push(update));
+    await service.startTestRun(planId, 'http://127.0.0.1:5050');
+    await vi.waitFor(() => expect(service.hasActiveTest()).toBe(false));
+    expect(mocks.runUpdateOne).toHaveBeenCalledOnce();
+    expect(updates.filter((update) => update.metrics?.elapsedMs)).toHaveLength(2);
+    expect(updates.map((update) => update.status)).toEqual(
+      expect.arrayContaining(['QUEUED', 'RUNNING', 'COMPLETED']),
     );
   });
 

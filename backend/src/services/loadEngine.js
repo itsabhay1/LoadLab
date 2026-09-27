@@ -290,6 +290,7 @@ export async function runLoadTest(input) {
     snapshotPending = true;
     const snapshot = {
       ...metrics.summarize(elapsedMs, false),
+      activeVirtualUsers: activeUsers,
       runtime: runtimeMonitor.snapshot(elapsedMs),
     };
     snapshotPromise = Promise.resolve()

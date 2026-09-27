@@ -1,0 +1,272 @@
+import { useEffect, useState } from 'react';
+import { Edit3, FlaskConical, Play, Plus, Trash2, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Button } from '../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { PageMessage } from '../components/run-widgets';
+import { api } from '../services/api';
+
+const DEFAULT_PLAN = {
+  name: '',
+  targetUrl: 'http://127.0.0.1:5050/fast',
+  virtualUsers: 10,
+  durationMs: 10_000,
+  rampUpMs: 2_000,
+  requestTimeoutMs: 3_000,
+  maxConnections: 10,
+  requestsPerSecond: 100,
+};
+const NUMERIC_FIELDS = new Set([
+  'virtualUsers',
+  'durationMs',
+  'rampUpMs',
+  'requestTimeoutMs',
+  'maxConnections',
+  'requestsPerSecond',
+]);
+
+function PlanForm({ plan, onSaved, onClose }) {
+  const [values, setValues] = useState(plan ?? DEFAULT_PLAN);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState();
+  const editing = Boolean(plan?._id);
+  const change = ({ target }) =>
+    setValues((current) => ({
+      ...current,
+      [target.name]: NUMERIC_FIELDS.has(target.name) ? Number(target.value) : target.value,
+    }));
+  const submit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError(undefined);
+    try {
+      const payload = Object.fromEntries(
+        Object.entries(values).filter(([key]) => key in DEFAULT_PLAN),
+      );
+      const response = editing
+        ? await api.updatePlan(plan._id, payload)
+        : await api.createPlan(payload);
+      onSaved(response.plan);
+    } catch (submitError) {
+      setError(submitError);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const fields = [
+    ['virtualUsers', 'Virtual users', 1, 1000],
+    ['durationMs', 'Duration (ms)', 50, 300000],
+    ['rampUpMs', 'Ramp-up (ms)', 0, 60000],
+    ['requestTimeoutMs', 'Timeout (ms)', 10, 30000],
+    ['maxConnections', 'Connection limit', 1, 100],
+    ['requestsPerSecond', 'Request starts / sec', 1, 5000],
+  ];
+  return (
+    <Card className="plan-form-card">
+      <CardHeader>
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle>{editing ? 'Edit test plan' : 'Create test plan'}</CardTitle>
+          <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close plan form">
+            <X />
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <form className="plan-form" onSubmit={submit}>
+          <label className="field field-wide">
+            Plan name
+            <input name="name" required maxLength="100" value={values.name} onChange={change} />
+          </label>
+          <label className="field field-wide">
+            Target URL
+            <input
+              name="targetUrl"
+              type="url"
+              required
+              value={values.targetUrl}
+              onChange={change}
+            />
+            <small>
+              Allowed: /fast, /slow, /variable or /flaky on the configured local mock server.
+            </small>
+          </label>
+          {fields.map(([name, label, min, max]) => (
+            <label className="field" key={name}>
+              {label}
+              <input
+                name={name}
+                type="number"
+                min={min}
+                max={max}
+                required
+                value={values[name]}
+                onChange={change}
+              />
+            </label>
+          ))}
+          {error && (
+            <div className="form-error" role="alert">
+              {error.message}
+            </div>
+          )}
+          <div className="form-actions">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create plan'}
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function TestPlans() {
+  const navigate = useNavigate();
+  const [plans, setPlans] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState();
+  const [editor, setEditor] = useState(null);
+  const [startingId, setStartingId] = useState();
+  useEffect(() => {
+    const controller = new AbortController();
+    api
+      .listPlans({ signal: controller.signal })
+      .then((response) => {
+        setPlans(response.plans);
+        setError(undefined);
+      })
+      .catch((loadError) => {
+        if (loadError.name !== 'AbortError') setError(loadError);
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, []);
+  const saved = (plan) => {
+    setPlans((current) => {
+      const found = current.some((item) => item._id === plan._id);
+      return found
+        ? current.map((item) => (item._id === plan._id ? plan : item))
+        : [plan, ...current];
+    });
+    setEditor(null);
+  };
+  const remove = async (plan) => {
+    if (!window.confirm(`Delete “${plan.name}”?`)) return;
+    try {
+      await api.deletePlan(plan._id);
+      setPlans((current) => current.filter((item) => item._id !== plan._id));
+    } catch (removeError) {
+      setError(removeError);
+    }
+  };
+  const start = async (plan) => {
+    setStartingId(plan._id);
+    setError(undefined);
+    try {
+      const response = await api.startRun(plan._id);
+      navigate(`/runs/${response.runId}/live`);
+    } catch (startError) {
+      setError(startError);
+      setStartingId(undefined);
+    }
+  };
+  return (
+    <div className="page-content">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">TEST MANAGEMENT</p>
+          <h1>Test plans</h1>
+          <p className="page-subtitle">Configure safe load tests for the local mock server.</p>
+        </div>
+        <Button onClick={() => setEditor(DEFAULT_PLAN)}>
+          <Plus />
+          New plan
+        </Button>
+      </div>
+      {editor && (
+        <PlanForm
+          plan={editor._id ? editor : undefined}
+          onSaved={saved}
+          onClose={() => setEditor(null)}
+        />
+      )}
+      {error && (
+        <PageMessage title="Could not complete the request" tone="error">
+          {error.message}
+        </PageMessage>
+      )}
+      {loading ? (
+        <PageMessage title="Loading test plans" />
+      ) : plans.length === 0 ? (
+        <PageMessage title="No test plans yet">
+          Create a plan to run your first local load test.
+        </PageMessage>
+      ) : (
+        <div className="plan-grid">
+          {plans.map((plan) => (
+            <Card key={plan._id} className="plan-card">
+              <CardHeader>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="service-icon">
+                    <FlaskConical size={20} />
+                  </span>
+                  <div className="row-actions">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Edit ${plan.name}`}
+                      onClick={() => setEditor(plan)}
+                    >
+                      <Edit3 />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Delete ${plan.name}`}
+                      onClick={() => void remove(plan)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                </div>
+                <CardTitle className="mt-4">{plan.name}</CardTitle>
+                <code className="plan-target">{plan.targetUrl}</code>
+              </CardHeader>
+              <CardContent>
+                <dl className="plan-stats">
+                  <div>
+                    <dt>Virtual users</dt>
+                    <dd>{plan.virtualUsers}</dd>
+                  </div>
+                  <div>
+                    <dt>Duration</dt>
+                    <dd>{plan.durationMs / 1000}s</dd>
+                  </div>
+                  <div>
+                    <dt>Ramp-up</dt>
+                    <dd>{plan.rampUpMs / 1000}s</dd>
+                  </div>
+                  <div>
+                    <dt>Rate limit</dt>
+                    <dd>{plan.requestsPerSecond}/s</dd>
+                  </div>
+                </dl>
+                <Button
+                  className="w-full mt-5"
+                  onClick={() => void start(plan)}
+                  disabled={Boolean(startingId)}
+                >
+                  <Play />
+                  {startingId === plan._id ? 'Starting…' : 'Start test'}
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,19 +1,20 @@
+import { useEffect, useState } from 'react';
 import {
   ArrowRight,
   Check,
   Circle,
-  Code2,
   Database,
   FlaskConical,
   Radio,
   RefreshCw,
   Server,
-  ShieldCheck,
-  Terminal,
 } from 'lucide-react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { StatusBadge } from '../components/run-widgets';
+import { api } from '../services/api';
+import { ACTIVE_STATUSES, formatNumber, latestMetrics } from '../utils/metrics';
 
 function ServiceCard({ icon: Icon, title, endpoint, result, loading, description }) {
   const success = result?.status === 'fulfilled';
@@ -59,6 +60,23 @@ function ServiceCard({ icon: Icon, title, endpoint, result, loading, description
 
 export function Overview() {
   const { health, ready, loading, checkedAt, refresh } = useOutletContext();
+  const [summary, setSummary] = useState({ plans: [], runs: [] });
+  const [summaryError, setSummaryError] = useState();
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([
+      api.listPlans({ signal: controller.signal }),
+      api.listRuns({ signal: controller.signal }),
+    ])
+      .then(([plans, runs]) => setSummary({ plans: plans.plans, runs: runs.runs }))
+      .catch((error) => {
+        if (error.name !== 'AbortError') setSummaryError(error);
+      });
+    return () => controller.abort();
+  }, []);
+  const latestRun = summary.runs[0];
+  const metrics = latestMetrics(latestRun);
+  const active = latestRun && ACTIVE_STATUSES.has(latestRun.status);
   return (
     <div className="page-content">
       <div className="page-heading">
@@ -66,7 +84,7 @@ export function Overview() {
           <p className="eyebrow">YOUR API PERFORMANCE WORKSPACE</p>
           <h1>Workspace overview</h1>
           <p className="page-subtitle">
-            A solid foundation for your next performance breakthrough.
+            Plan, run and inspect local performance tests from one dashboard.
           </p>
         </div>
         <Button variant="outline" onClick={refresh} disabled={loading}>
@@ -78,50 +96,47 @@ export function Overview() {
         <div className="welcome-copy">
           <span className="welcome-tag">
             <span className="status-dot" />
-            PHASE 01 / FOUNDATION
+            LIVE TESTING WORKSPACE
           </span>
           <h2 id="welcome-title">
-            Great performance starts
-            <br className="hidden sm:block" /> with the right foundation.
+            Measure your local API
+            <br className="hidden sm:block" /> with real load.
           </h2>
           <p>
-            Your LoadLab workspace is taking shape. Connect your API and database to get the
-            essentials ready for what comes next.
+            Create controlled tests, watch aggregate metrics as they run and keep results in MongoDB
+            for later review.
           </p>
           <Button asChild className="welcome-button">
-            <Link to="/setup">
-              Set up your workspace
+            <Link to="/plans">
+              Create a test plan
               <ArrowRight />
             </Link>
           </Button>
         </div>
-        <div
-          className="system-map"
-          aria-label="Architecture: web client connects to Express API, which connects to MongoDB"
-        >
-          <div className="map-label">THE FOUNDATION STACK</div>
+        <div className="system-map" aria-label="React dashboard connects to Express and MongoDB">
+          <div className="map-label">LOADLAB PIPELINE</div>
           <div className="map-node">
-            <Code2 />
+            <FlaskConical />
             <span>
-              Web client<small>React + Vite</small>
+              Test plan<small>Safe local target</small>
             </span>
-            <span className="map-node-tag">UI</span>
+            <span className="map-node-tag">PLAN</span>
           </div>
           <div className="map-line" />
           <div className="map-node">
             <Server />
             <span>
-              API service<small>Node.js + Express</small>
+              Load engine<small>Up to 1000 VUs</small>
             </span>
-            <span className="map-node-tag">API</span>
+            <span className="map-node-tag">RUN</span>
           </div>
           <div className="map-line" />
           <div className="map-node">
             <Database />
             <span>
-              Database<small>MongoDB Atlas</small>
+              Run history<small>MongoDB aggregates</small>
             </span>
-            <span className="map-node-tag">DB</span>
+            <span className="map-node-tag">DATA</span>
           </div>
         </div>
       </section>
@@ -150,81 +165,65 @@ export function Overview() {
             endpoint="/api/v1/ready"
             result={ready}
             loading={loading}
-            description="Connection and live ping to your MongoDB database."
+            description="Connection and live ping to MongoDB Atlas."
           />
         </div>
       </section>
-      <div className="lower-grid">
+      <div className="overview-stats">
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Load testing</CardTitle>
-              <span className="neutral-badge">COMING NEXT</span>
-            </div>
-          </CardHeader>
           <CardContent>
-            <div className="empty-tests">
-              <div className="empty-icon">
-                <FlaskConical size={27} />
-              </div>
-              <h3>Your first test starts here.</h3>
-              <p>
-                Configure requests, simulate concurrent users and understand how your API performs
-                under pressure.
-              </p>
-              <span className="text-xs text-muted-foreground">
-                Test creation arrives in a future phase.
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Foundation checklist</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              The essentials, before the first request.
-            </p>
-          </CardHeader>
-          <CardContent>
-            <ul className="checklist">
-              <li>
-                <Check />
-                <span>
-                  Dashboard shell<small>Responsive workspace, light & dark themes</small>
-                </span>
-                <span className="check-label">Ready</span>
-              </li>
-              <li>
-                {health?.status === 'fulfilled' ? <Check /> : <Circle />}
-                <span>
-                  API connection<small>Live process health check</small>
-                </span>
-                <span className="check-label">
-                  {!health ? 'Checking' : health.status === 'fulfilled' ? 'Ready' : 'Check setup'}
-                </span>
-              </li>
-              <li>
-                {ready?.status === 'fulfilled' ? <Check /> : <Circle />}
-                <span>
-                  Database connection<small>Verified with a real database ping</small>
-                </span>
-                <span className="check-label">
-                  {!ready ? 'Checking' : ready.status === 'fulfilled' ? 'Ready' : 'Check setup'}
-                </span>
-              </li>
-            </ul>
-            <Link className="setup-link" to="/setup">
-              <Terminal size={15} />
-              View local setup instructions
-              <ArrowRight size={15} />
+            <small>Test plans</small>
+            <strong>{summaryError ? '—' : summary.plans.length}</strong>
+            <Link to="/plans">
+              Manage plans <ArrowRight />
             </Link>
           </CardContent>
         </Card>
+        <Card>
+          <CardContent>
+            <small>Stored runs</small>
+            <strong>{summaryError ? '—' : summary.runs.length}</strong>
+            <Link to="/history">
+              View history <ArrowRight />
+            </Link>
+          </CardContent>
+        </Card>
+        <Card className="latest-run-card">
+          <CardContent>
+            <div>
+              <small>Latest run</small>
+              {latestRun ? (
+                <>
+                  <div className="flex items-center gap-3 mt-2">
+                    <strong>{latestRun.configurationSnapshot.name}</strong>
+                    <StatusBadge status={latestRun.status} />
+                  </div>
+                  <span>
+                    {metrics
+                      ? `${formatNumber(metrics.rps, 1)} RPS · ${formatNumber(metrics.p95LatencyMs, 1)} ms p95`
+                      : 'Waiting for metrics'}
+                  </span>
+                </>
+              ) : (
+                <strong>No runs yet</strong>
+              )}
+            </div>
+            {latestRun && (
+              <Button asChild variant="outline" size="sm">
+                <Link to={active ? `/runs/${latestRun._id}/live` : `/runs/${latestRun._id}`}>
+                  Open
+                  <ArrowRight />
+                </Link>
+              </Button>
+            )}
+          </CardContent>
+        </Card>
       </div>
-      <p className="foundation-footnote">
-        <ShieldCheck size={15} />
-        Foundation release. Load generation, authentication and analytics are planned.
-      </p>
+      {summaryError && (
+        <p className="summary-error" role="alert">
+          Run summary unavailable: {summaryError.message}
+        </p>
+      )}
     </div>
   );
 }

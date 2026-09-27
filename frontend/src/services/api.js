@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const API_PREFIX = '/api/v1';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const healthSchema = z.object({
   status: z.literal('ok'),
   service: z.literal('loadlab-api'),
@@ -11,6 +12,45 @@ const readinessSchema = z.object({
   status: z.literal('ready'),
   checks: z.object({ database: z.literal('connected') }),
 });
+const planSchema = z
+  .object({
+    _id: z.string(),
+    name: z.string(),
+    targetUrl: z.string(),
+    virtualUsers: z.number(),
+    durationMs: z.number(),
+    rampUpMs: z.number(),
+    requestTimeoutMs: z.number(),
+    maxConnections: z.number(),
+    requestsPerSecond: z.number(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough();
+const statusSchema = z.enum([
+  'QUEUED',
+  'RUNNING',
+  'COMPLETED',
+  'CANCELLED',
+  'FAILED',
+  'INTERRUPTED',
+]);
+const runSchema = z
+  .object({
+    _id: z.string(),
+    plan: z.union([z.string(), z.object({ _id: z.string() }).passthrough()]),
+    configurationSnapshot: z.object({ name: z.string() }).passthrough(),
+    status: statusSchema,
+    snapshots: z.array(
+      z.object({ capturedAt: z.string(), metrics: z.record(z.string(), z.any()) }),
+    ),
+    finalMetrics: z.record(z.string(), z.any()).optional(),
+    queuedAt: z.string(),
+    startedAt: z.string().optional(),
+    finishedAt: z.string().optional(),
+    reason: z.string().optional(),
+  })
+  .passthrough();
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = 'NETWORK_ERROR', requestId } = {}) {
@@ -45,7 +85,7 @@ export function createApiClient({
       }
     })();
 
-  async function get(path, { signal, schema } = {}) {
+  async function request(path, { signal, schema, method = 'GET', body } = {}) {
     if (!validBase)
       throw new ApiError(
         'VITE_API_BASE_URL must be an HTTP(S) URL without credentials, query or fragment.',
@@ -62,10 +102,15 @@ export function createApiClient({
     }, timeoutMs);
     try {
       const response = await fetchImpl(`${base}${API_PREFIX}${path}`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
+        method,
+        headers: {
+          Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: controller.signal,
       });
+      if (response.status === 204) return undefined;
       let data;
       try {
         data = await response.json();
@@ -109,10 +154,48 @@ export function createApiClient({
     }
   }
   return {
-    get,
-    health: (options) => get('/health', { ...options, schema: healthSchema }),
-    ready: (options) => get('/ready', { ...options, schema: readinessSchema }),
+    request,
+    health: (options) => request('/health', { ...options, schema: healthSchema }),
+    ready: (options) => request('/ready', { ...options, schema: readinessSchema }),
+    listPlans: (options) =>
+      request('/plans', { ...options, schema: z.object({ plans: z.array(planSchema) }) }),
+    getPlan: (planId, options) =>
+      request(`/plans/${planId}`, { ...options, schema: z.object({ plan: planSchema }) }),
+    createPlan: (plan, options) =>
+      request('/plans', {
+        ...options,
+        method: 'POST',
+        body: plan,
+        schema: z.object({ plan: planSchema }),
+      }),
+    updatePlan: (planId, plan, options) =>
+      request(`/plans/${planId}`, {
+        ...options,
+        method: 'PATCH',
+        body: plan,
+        schema: z.object({ plan: planSchema }),
+      }),
+    deletePlan: (planId, options) => request(`/plans/${planId}`, { ...options, method: 'DELETE' }),
+    startRun: (planId, options) =>
+      request(`/plans/${planId}/runs`, {
+        ...options,
+        method: 'POST',
+        schema: z.object({ runId: z.string(), status: statusSchema }),
+      }),
+    cancelRun: (runId, options) =>
+      request(`/runs/${runId}/cancel`, {
+        ...options,
+        method: 'POST',
+        schema: z.object({ runId: z.string(), cancellationRequested: z.literal(true) }),
+      }),
+    getRun: (runId, options) =>
+      request(`/runs/${runId}`, { ...options, schema: z.object({ run: runSchema }) }),
+    listRuns: ({ planId, ...options } = {}) =>
+      request(`/runs${planId ? `?planId=${encodeURIComponent(planId)}` : ''}`, {
+        ...options,
+        schema: z.object({ runs: z.array(runSchema) }),
+      }),
   };
 }
 
-export const api = createApiClient({ baseUrl: import.meta.env.VITE_API_BASE_URL });
+export const api = createApiClient({ baseUrl: API_BASE_URL });

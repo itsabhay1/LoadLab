@@ -1,12 +1,26 @@
 import { setImmediate } from 'node:timers';
+import { EventEmitter } from 'node:events';
 import { logger, errorKind } from '../config/logger.js';
 import { TestPlan } from '../models/test-plan.js';
 import { ACTIVE_RUN_STATUSES, RUN_STATUS, TestRun } from '../models/test-run.js';
 import { runLoadTest } from './loadEngine.js';
 
 const MAX_SNAPSHOTS = 60;
+const LIVE_SNAPSHOT_INTERVAL_MS = 1_000;
+const DATABASE_SNAPSHOT_INTERVAL_MS = 5_000;
 let starting = false;
 let activeExecution;
+
+export const testRunEvents = new EventEmitter();
+
+function publishRunUpdate(runId, status, values = {}) {
+  testRunEvents.emit('run:update', {
+    runId: String(runId),
+    status,
+    capturedAt: new Date().toISOString(),
+    ...values,
+  });
+}
 
 function serviceError(status, code, message) {
   return Object.assign(new Error(message), { status, code, publicMessage: message });
@@ -40,6 +54,9 @@ async function executeRun(runId, configuration, mockServerOrigin, execution) {
         finishedAt: new Date(),
         reason: execution.cancellationReason,
       });
+      publishRunUpdate(runId, RUN_STATUS.CANCELLED, {
+        reason: execution.cancellationReason,
+      });
       return;
     }
 
@@ -47,13 +64,21 @@ async function executeRun(runId, configuration, mockServerOrigin, execution) {
       startedAt: new Date(),
     });
     if (!running) return;
+    publishRunUpdate(runId, RUN_STATUS.RUNNING, {
+      startedAt: running.startedAt?.toISOString?.() ?? new Date().toISOString(),
+    });
+
+    let lastPersistedElapsedMs = 0;
 
     const finalMetrics = await runLoadTest({
       ...configuration,
       mockServerOrigin,
       signal: execution.controller.signal,
-      snapshotIntervalMs: 5_000,
+      snapshotIntervalMs: LIVE_SNAPSHOT_INTERVAL_MS,
       async onSnapshot(metrics) {
+        publishRunUpdate(runId, RUN_STATUS.RUNNING, { metrics });
+        if (metrics.elapsedMs - lastPersistedElapsedMs < DATABASE_SNAPSHOT_INTERVAL_MS) return;
+        lastPersistedElapsedMs = metrics.elapsedMs;
         await TestRun.updateOne(
           { _id: runId, status: RUN_STATUS.RUNNING },
           {
@@ -69,9 +94,17 @@ async function executeRun(runId, configuration, mockServerOrigin, execution) {
     });
 
     const status = finalMetrics.cancelled ? RUN_STATUS.CANCELLED : RUN_STATUS.COMPLETED;
+    const finishedAt = new Date();
     await transition(runId, [RUN_STATUS.RUNNING], status, {
       finalMetrics,
-      finishedAt: new Date(),
+      finishedAt,
+      ...(status === RUN_STATUS.CANCELLED
+        ? { reason: execution.cancellationReason ?? 'Cancelled by user.' }
+        : {}),
+    });
+    publishRunUpdate(runId, status, {
+      metrics: finalMetrics,
+      finishedAt: finishedAt.toISOString(),
       ...(status === RUN_STATUS.CANCELLED
         ? { reason: execution.cancellationReason ?? 'Cancelled by user.' }
         : {}),
@@ -79,9 +112,15 @@ async function executeRun(runId, configuration, mockServerOrigin, execution) {
   } catch (error) {
     logger.error({ event: 'test_run_failed', runId, kind: errorKind(error) });
     try {
+      const finishedAt = new Date();
+      const reason = `Execution failed (${errorKind(error)}).`;
       await transition(runId, ACTIVE_RUN_STATUSES, RUN_STATUS.FAILED, {
-        finishedAt: new Date(),
-        reason: `Execution failed (${errorKind(error)}).`,
+        finishedAt,
+        reason,
+      });
+      publishRunUpdate(runId, RUN_STATUS.FAILED, {
+        finishedAt: finishedAt.toISOString(),
+        reason,
       });
     } catch (persistenceError) {
       logger.error({
@@ -117,6 +156,9 @@ export async function startTestRun(planId, mockServerOrigin) {
       cancellationReason: undefined,
     };
     activeExecution = execution;
+    publishRunUpdate(execution.runId, RUN_STATUS.QUEUED, {
+      queuedAt: run.queuedAt?.toISOString?.() ?? new Date().toISOString(),
+    });
     setImmediate(
       () => void executeRun(execution.runId, configuration, mockServerOrigin, execution),
     );
