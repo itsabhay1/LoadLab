@@ -155,6 +155,28 @@ describe('load engine', () => {
     );
   });
 
+  it('emits bounded aggregate snapshots without request-level data', async () => {
+    const origin = await startServer((_request, response) => response.end('ok'));
+    const snapshots = [];
+    await runLoadTest(
+      options(origin, {
+        durationMs: 1100,
+        snapshotIntervalMs: 1000,
+        onSnapshot: (snapshot) => snapshots.push(snapshot),
+      }),
+    );
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toEqual(
+      expect.objectContaining({
+        totalRequests: expect.any(Number),
+        p95LatencyMs: expect.any(Number),
+        runtime: expect.objectContaining({ peakRssMb: expect.any(Number) }),
+      }),
+    );
+    expect(snapshots[0]).not.toHaveProperty('requests');
+  });
+
   it('enforces the global request start-rate limit', async () => {
     const origin = await startServer((_request, response) => response.end('ok'));
     const result = await runLoadTest(

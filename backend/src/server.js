@@ -6,6 +6,7 @@ import { createApp } from './app.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { parseEnv } from './config/env.js';
 import { errorKind, logger } from './config/logger.js';
+import { recoverInterruptedRuns } from './services/test-runner.js';
 
 let app;
 let server;
@@ -76,6 +77,12 @@ export async function startServer() {
     await connectDatabase(config.MONGODB_URI);
     if (stopping) return;
 
+    stage = 'recovery';
+    const interruptedRuns = await recoverInterruptedRuns();
+    if (interruptedRuns > 0) {
+      logger.warn({ event: 'test_runs_interrupted', count: interruptedRuns });
+    }
+
     stage = 'listen';
     server = createServer(app);
     server.requestTimeout = 15000;
@@ -83,7 +90,7 @@ export async function startServer() {
     server.keepAliveTimeout = 5000;
     await new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(config.PORT, () => {
+      server.listen(config.PORT, '127.0.0.1', () => {
         server.off('error', reject);
         resolve();
       });
@@ -92,7 +99,12 @@ export async function startServer() {
       logger.fatal({ event: 'server_error', kind: errorKind(error) });
       void shutdown('server_error', 1);
     });
-    logger.info({ event: 'server_started', port: config.PORT, environment: config.NODE_ENV });
+    logger.info({
+      event: 'server_started',
+      host: '127.0.0.1',
+      port: config.PORT,
+      environment: config.NODE_ENV,
+    });
   } catch (error) {
     logger.fatal({
       event: 'startup_failed',

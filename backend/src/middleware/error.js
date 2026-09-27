@@ -28,6 +28,18 @@ export function errorHandler(error, req, res, next) {
     status = 415;
     code = 'UNSUPPORTED_ENCODING';
     message = 'Unsupported request encoding.';
+  } else if (error.name === 'ValidationError') {
+    status = 400;
+    code = 'VALIDATION_ERROR';
+    message = 'Stored data did not pass validation.';
+  } else if (error.name === 'CastError') {
+    status = 400;
+    code = 'INVALID_ID';
+    message = 'Resource ID is invalid.';
+  } else if (error.code === 11000) {
+    status = 409;
+    code = 'CONFLICT';
+    message = 'A conflicting resource already exists.';
   }
   logger[status >= 500 ? 'error' : 'warn']({
     event: 'request_failed',

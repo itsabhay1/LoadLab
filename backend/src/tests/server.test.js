@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   parseEnv: vi.fn(),
   connectDatabase: vi.fn(),
   disconnectDatabase: vi.fn(),
+  recoverInterruptedRuns: vi.fn(),
   createServer: vi.fn(),
   logger: { info: vi.fn(), error: vi.fn(), fatal: vi.fn() },
 }));
@@ -28,6 +29,9 @@ vi.mock('../config/logger.js', async (importOriginal) => ({
   ...(await importOriginal()),
   logger: mocks.logger,
 }));
+vi.mock('../services/test-runner.js', () => ({
+  recoverInterruptedRuns: mocks.recoverInterruptedRuns,
+}));
 
 let signals;
 let server;
@@ -38,9 +42,10 @@ beforeEach(() => {
   mocks.parseEnv.mockReturnValue(mocks.config);
   mocks.connectDatabase.mockReset().mockResolvedValue();
   mocks.disconnectDatabase.mockReset().mockResolvedValue();
+  mocks.recoverInterruptedRuns.mockReset().mockResolvedValue(0);
   server = new EventEmitter();
   server.listening = false;
-  server.listen = vi.fn((_port, done) => {
+  server.listen = vi.fn((_port, _host, done) => {
     server.listening = true;
     done();
   });
@@ -65,9 +70,12 @@ describe('server startup and shutdown', () => {
     await boot();
     expect(mocks.connectDatabase).toHaveBeenCalledWith(mocks.config.MONGODB_URI);
     expect(mocks.connectDatabase.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.recoverInterruptedRuns.mock.invocationCallOrder[0],
+    );
+    expect(mocks.recoverInterruptedRuns.mock.invocationCallOrder[0]).toBeLessThan(
       server.listen.mock.invocationCallOrder[0],
     );
-    expect(server.listen).toHaveBeenCalledWith(5000, expect.any(Function));
+    expect(server.listen).toHaveBeenCalledWith(5000, '127.0.0.1', expect.any(Function));
     expect(server).toMatchObject({
       requestTimeout: 15000,
       headersTimeout: 10000,

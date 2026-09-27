@@ -7,7 +7,11 @@ const valid = {
 };
 describe('environment validation', () => {
   it('parses defaults and a valid Atlas URI', () => {
-    expect(parseEnv(valid)).toMatchObject({ PORT: 5000, NODE_ENV: 'development' });
+    expect(parseEnv(valid)).toMatchObject({
+      PORT: 5000,
+      NODE_ENV: 'development',
+      MOCK_SERVER_URL: 'http://127.0.0.1:5050',
+    });
     expect(
       parseEnv({
         ...valid,
@@ -28,6 +32,8 @@ describe('environment validation', () => {
     { CLIENT_URL: 'http://localhost:5173/' },
     { CLIENT_URL: 'ftp://localhost' },
     { CLIENT_URL: 'http://user:secret@localhost:5173' },
+    { MOCK_SERVER_URL: 'https://example.com' },
+    { MOCK_SERVER_URL: 'http://127.0.0.1:5050/fast' },
   ])('rejects invalid config %j without including values', (override) => {
     expect(() => parseEnv({ ...valid, ...override })).toThrow(/Invalid environment configuration/);
     try {

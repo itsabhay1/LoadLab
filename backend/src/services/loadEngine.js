@@ -106,6 +106,15 @@ function validateConfig(input) {
   if (input.signal !== undefined && !(input.signal instanceof AbortSignal)) {
     throw new LoadTestConfigError('signal must be an AbortSignal.');
   }
+  if (input.onSnapshot !== undefined && typeof input.onSnapshot !== 'function') {
+    throw new LoadTestConfigError('onSnapshot must be a function.');
+  }
+  const snapshotIntervalMs = requireInteger(
+    'snapshotIntervalMs',
+    input.snapshotIntervalMs ?? 5_000,
+    1_000,
+    30_000,
+  );
 
   return {
     target,
@@ -116,6 +125,8 @@ function validateConfig(input) {
     requestsPerSecond,
     maxConnections,
     signal: input.signal,
+    onSnapshot: input.onSnapshot,
+    snapshotIntervalMs,
   };
 }
 
@@ -212,27 +223,32 @@ function createRuntimeMonitor() {
   const memorySampler = setInterval(sampleMemory, 100);
   memorySampler.unref();
 
+  const read = (elapsedMs) => {
+    const cpu = process.cpuUsage(cpuStartedAt);
+    const nanosecondsToMilliseconds = (value) => value / 1_000_000;
+    const bytesToMegabytes = (value) => value / (1024 * 1024);
+    const round = (value) => Math.round(value * 100) / 100;
+    const cpuTotalMs = (cpu.user + cpu.system) / 1000;
+
+    return Object.freeze({
+      cpuUserMs: round(cpu.user / 1000),
+      cpuSystemMs: round(cpu.system / 1000),
+      cpuUtilizationPercent: elapsedMs > 0 ? round((cpuTotalMs / elapsedMs) * 100) : 0,
+      peakRssMb: round(bytesToMegabytes(peakRssBytes)),
+      peakHeapUsedMb: round(bytesToMegabytes(peakHeapUsedBytes)),
+      eventLoopDelayMeanMs: round(nanosecondsToMilliseconds(eventLoopDelay.mean || 0)),
+      eventLoopDelayP95Ms: round(nanosecondsToMilliseconds(eventLoopDelay.percentile(95))),
+      eventLoopDelayMaxMs: round(nanosecondsToMilliseconds(eventLoopDelay.max)),
+    });
+  };
+
   return {
+    snapshot: read,
     stop(elapsedMs) {
       clearInterval(memorySampler);
       sampleMemory();
       eventLoopDelay.disable();
-      const cpu = process.cpuUsage(cpuStartedAt);
-      const nanosecondsToMilliseconds = (value) => value / 1_000_000;
-      const bytesToMegabytes = (value) => value / (1024 * 1024);
-      const round = (value) => Math.round(value * 100) / 100;
-      const cpuTotalMs = (cpu.user + cpu.system) / 1000;
-
-      return Object.freeze({
-        cpuUserMs: round(cpu.user / 1000),
-        cpuSystemMs: round(cpu.system / 1000),
-        cpuUtilizationPercent: elapsedMs > 0 ? round((cpuTotalMs / elapsedMs) * 100) : 0,
-        peakRssMb: round(bytesToMegabytes(peakRssBytes)),
-        peakHeapUsedMb: round(bytesToMegabytes(peakHeapUsedBytes)),
-        eventLoopDelayMeanMs: round(nanosecondsToMilliseconds(eventLoopDelay.mean || 0)),
-        eventLoopDelayP95Ms: round(nanosecondsToMilliseconds(eventLoopDelay.percentile(95))),
-        eventLoopDelayMaxMs: round(nanosecondsToMilliseconds(eventLoopDelay.max)),
-      });
+      return read(elapsedMs);
     },
   };
 }
@@ -265,6 +281,30 @@ export async function runLoadTest(input) {
     bodyTimeout: config.requestTimeoutMs,
     maxResponseSize: LOAD_LIMITS.maxResponseBytes,
   });
+  let snapshotPromise = Promise.resolve();
+  let snapshotPending = false;
+  let snapshotError;
+  const captureSnapshot = () => {
+    if (!config.onSnapshot || snapshotPending) return;
+    const elapsedMs = performance.now() - startedAt;
+    snapshotPending = true;
+    const snapshot = {
+      ...metrics.summarize(elapsedMs, false),
+      runtime: runtimeMonitor.snapshot(elapsedMs),
+    };
+    snapshotPromise = Promise.resolve()
+      .then(() => config.onSnapshot(snapshot))
+      .catch((error) => {
+        snapshotError ??= error;
+      })
+      .finally(() => {
+        snapshotPending = false;
+      });
+  };
+  const snapshotTimer = config.onSnapshot
+    ? setInterval(captureSnapshot, config.snapshotIntervalMs)
+    : undefined;
+  snapshotTimer?.unref();
 
   async function makeRequest() {
     const requestStartedAt = performance.now();
@@ -344,7 +384,14 @@ export async function runLoadTest(input) {
     executionError = error;
   } finally {
     clearTimeout(durationTimer);
+    clearInterval(snapshotTimer);
     config.signal?.removeEventListener('abort', cancel);
+    try {
+      await snapshotPromise;
+      executionError ??= snapshotError;
+    } catch (error) {
+      executionError ??= error;
+    }
     try {
       await pool.close();
     } catch (error) {

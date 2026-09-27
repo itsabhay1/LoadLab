@@ -16,6 +16,21 @@ const schema = z.object({
       return false;
     }
   }),
+  MOCK_SERVER_URL: z
+    .url()
+    .default('http://127.0.0.1:5050')
+    .refine((value) => {
+      try {
+        const url = new URL(value);
+        return (
+          url.protocol === 'http:' &&
+          ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) &&
+          url.origin === value
+        );
+      } catch {
+        return false;
+      }
+    }),
 });
 
 export function parseEnv(input) {
