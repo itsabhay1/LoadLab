@@ -5,7 +5,8 @@
   "type": "module",
   "workspaces": [
     "backend",
-    "frontend"
+    "frontend",
+    "mock-server"
   ],
   "engines": {
     "node": "^22.16.0 || ^24.0.0 || >=26.0.0",
@@ -15,7 +16,10 @@
     "dev": "concurrently --kill-others-on-fail --names backend,frontend --prefix-colors cyan,magenta \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "dev:backend": "npm run dev -w backend",
     "dev:frontend": "npm run dev -w frontend",
+    "dev:mock": "npm run dev -w mock-server",
     "start": "npm run start -w backend",
+    "start:mock": "npm run start -w mock-server",
+    "load:test": "npm run load:test -w backend --",
     "build": "npm run build -w frontend",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
