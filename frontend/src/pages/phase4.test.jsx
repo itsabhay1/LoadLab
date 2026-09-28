@@ -17,6 +17,7 @@ vi.mock('../services/api', async (importOriginal) => {
     ...original,
     api: {
       listPlans: vi.fn(),
+      listTargets: vi.fn(),
       createPlan: vi.fn(),
       updatePlan: vi.fn(),
       deletePlan: vi.fn(),
@@ -68,6 +69,7 @@ afterEach(() => cleanup());
 beforeEach(() => {
   vi.clearAllMocks();
   api.listPlans.mockResolvedValue({ plans: [] });
+  api.listTargets.mockResolvedValue({ targets: [] });
   api.listRuns.mockResolvedValue({ runs: [] });
   window.confirm = vi.fn(() => true);
 });

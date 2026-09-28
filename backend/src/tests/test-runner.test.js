@@ -2,17 +2,30 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   planFindOne: vi.fn(),
+  targetFindOne: vi.fn(),
   runCreate: vi.fn(),
   runFindOne: vi.fn(),
   runFindOneAndUpdate: vi.fn(),
   runUpdateOne: vi.fn(),
   runUpdateMany: vi.fn(),
   runLoadTest: vi.fn(),
+  resolveSafeTarget: vi.fn(),
   logger: { error: vi.fn() },
 }));
 
 vi.mock('../models/test-plan.js', () => ({
   TestPlan: { findOne: mocks.planFindOne },
+}));
+vi.mock('../models/target.js', () => ({
+  TARGET_STATUS: { PENDING: 'PENDING', VERIFIED: 'VERIFIED' },
+  Target: { findOne: mocks.targetFindOne },
+}));
+vi.mock('../services/safe-target.js', () => ({
+  TargetSafetyError: class TargetSafetyError extends Error {},
+  normalizeExternalBaseUrl: (value) => ({ baseUrl: value, hostname: new URL(value).hostname }),
+  buildExternalTargetUrl: (baseUrl, path) => new URL(path, baseUrl),
+  validateExternalRequest: (method, headers, body) => ({ method, headers, body }),
+  resolveSafeTarget: mocks.resolveSafeTarget,
 }));
 vi.mock('../models/test-run.js', () => ({
   RUN_STATUS: {
@@ -65,6 +78,10 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   mocks.planFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(plan) });
+  mocks.targetFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(null) });
+  mocks.resolveSafeTarget.mockResolvedValue({
+    addresses: [{ address: '93.184.216.34', family: 4 }],
+  });
   mocks.runCreate.mockResolvedValue({ _id: runId, status: 'QUEUED' });
   mocks.runFindOne.mockReturnValue({
     lean: vi.fn().mockResolvedValue({ _id: runId, status: 'COMPLETED' }),
@@ -159,6 +176,69 @@ describe('test runner persistence', () => {
       service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050'),
     ).rejects.toMatchObject({ status: 404, code: 'PLAN_NOT_FOUND' });
     expect(mocks.planFindOne).toHaveBeenCalledWith({ _id: planId, owner: ownerId });
+    expect(mocks.runCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not start a local mock plan in production', async () => {
+    const service = await runner();
+    await expect(
+      service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050', 'production'),
+    ).rejects.toMatchObject({ code: 'LOCAL_TARGET_DISABLED' });
+    expect(mocks.runCreate).not.toHaveBeenCalled();
+  });
+
+  it('starts only an owned verified external target with pinned safe addresses', async () => {
+    const targetId = '507f1f77bcf86cd799439099';
+    const externalPlan = {
+      ...plan,
+      targetMode: 'EXTERNAL',
+      target: targetId,
+      endpointPath: '/api/products',
+      method: 'POST',
+      requestHeaders: { authorization: 'Bearer test' },
+      requestBody: { sample: true },
+    };
+    mocks.planFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(externalPlan) });
+    mocks.targetFindOne.mockReturnValue({
+      lean: vi.fn().mockResolvedValue({
+        _id: targetId,
+        owner: ownerId,
+        baseUrl: 'https://api.example.com',
+        status: 'VERIFIED',
+      }),
+    });
+    const service = await runner();
+    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
+    expect(mocks.targetFindOne).toHaveBeenCalledWith({
+      _id: targetId,
+      owner: ownerId,
+      status: 'VERIFIED',
+    });
+    await vi.waitFor(() =>
+      expect(mocks.runLoadTest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetMode: 'EXTERNAL',
+          targetUrl: 'https://api.example.com/api/products',
+          method: 'POST',
+          resolvedAddresses: [{ address: '93.184.216.34', family: 4 }],
+        }),
+      ),
+    );
+  });
+
+  it('rejects an external plan when its owned verified target is unavailable', async () => {
+    mocks.planFindOne.mockReturnValue({
+      lean: vi.fn().mockResolvedValue({
+        ...plan,
+        targetMode: 'EXTERNAL',
+        target: '507f1f77bcf86cd799439099',
+        endpointPath: '/api/products',
+      }),
+    });
+    const service = await runner();
+    await expect(
+      service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050'),
+    ).rejects.toMatchObject({ code: 'TARGET_UNAVAILABLE' });
     expect(mocks.runCreate).not.toHaveBeenCalled();
   });
 

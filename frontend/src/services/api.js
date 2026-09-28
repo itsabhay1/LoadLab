@@ -32,11 +32,31 @@ const readinessSchema = z.object({
 });
 const userSchema = z.object({ id: z.string(), name: z.string(), email: z.email() });
 const authSchema = z.object({ accessToken: z.string().min(1), user: userSchema });
+const targetSchema = z
+  .object({
+    _id: z.string(),
+    name: z.string(),
+    baseUrl: z.string(),
+    hostname: z.string(),
+    verificationToken: z.string(),
+    verificationUrl: z.string(),
+    status: z.enum(['PENDING', 'VERIFIED']),
+    verifiedAt: z.string().optional().nullable(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough();
 const planSchema = z
   .object({
     _id: z.string(),
     name: z.string(),
+    targetMode: z.enum(['LOCAL', 'EXTERNAL']).optional(),
+    target: z.string().optional().nullable(),
+    endpointPath: z.string().optional().nullable(),
     targetUrl: z.string(),
+    method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
+    requestHeaders: z.record(z.string(), z.string()).optional(),
+    requestBody: z.any().optional(),
     virtualUsers: z.number(),
     durationMs: z.number(),
     rampUpMs: z.number(),
@@ -203,6 +223,25 @@ export function createApiClient({
           REFRESH_REQUIRED: 'No refresh session is available.',
           REFRESH_EXPIRED: 'Your refresh session has expired.',
           INVALID_REFRESH_TOKEN: 'Your refresh session is invalid.',
+          TARGET_EXISTS: 'This target is already in your account.',
+          TARGET_NOT_FOUND: 'Target was not found.',
+          TARGET_NOT_VERIFIED: 'Select a verified target owned by your account.',
+          TARGET_UNAVAILABLE: 'The verified target is no longer available.',
+          TARGET_NO_LONGER_ELIGIBLE: 'The target no longer passes safety validation.',
+          LOCAL_TARGET_DISABLED: 'Local test mode is not available in production.',
+          TARGET_FORBIDDEN: 'The target destination is not allowed.',
+          TARGET_PRIVATE_ADDRESS: 'Targets resolving to private or local addresses are blocked.',
+          TARGET_DNS_FAILED: 'The target hostname could not be resolved.',
+          TARGET_TIMEOUT: 'The verification request timed out.',
+          VERIFICATION_UNAVAILABLE: 'The verification endpoint could not be reached.',
+          VERIFICATION_MISMATCH: 'The verification token did not match.',
+          UNSAFE_REDIRECT: 'The verification redirect was rejected.',
+          UNSAFE_PROTOCOL: 'Only HTTP and HTTPS targets are supported.',
+          INVALID_TARGET_URL: 'Enter an HTTP(S) origin without a path or custom port.',
+          INVALID_ENDPOINT_PATH: 'The endpoint path cannot change the verified hostname.',
+          INVALID_HEADERS: 'One or more request headers are not allowed.',
+          INVALID_REQUEST_BODY: 'The JSON request body is invalid or too large.',
+          UNSUPPORTED_METHOD: 'The HTTP method is not supported.',
           VALIDATION_ERROR: 'Please check the information you entered.',
         };
         throw new ApiError(
@@ -305,6 +344,25 @@ export function createApiClient({
         retryAccessToken: false,
       }),
     me: (options) => request('/auth/me', { ...options, schema: z.object({ user: userSchema }) }),
+    listTargets: (options) =>
+      request('/targets', { ...options, schema: z.object({ targets: z.array(targetSchema) }) }),
+    getTarget: (targetId, options) =>
+      request(`/targets/${targetId}`, { ...options, schema: z.object({ target: targetSchema }) }),
+    createTarget: (target, options) =>
+      request('/targets', {
+        ...options,
+        method: 'POST',
+        body: target,
+        schema: z.object({ target: targetSchema }),
+      }),
+    verifyTarget: (targetId, options) =>
+      request(`/targets/${targetId}/verify`, {
+        ...options,
+        method: 'POST',
+        schema: z.object({ target: targetSchema }),
+      }),
+    deleteTarget: (targetId, options) =>
+      request(`/targets/${targetId}`, { ...options, method: 'DELETE' }),
     listPlans: (options) =>
       request('/plans', { ...options, schema: z.object({ plans: z.array(planSchema) }) }),
     getPlan: (planId, options) =>

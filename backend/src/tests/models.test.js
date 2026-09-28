@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TestPlan } from '../models/test-plan.js';
 import { RUN_STATUS, TestRun } from '../models/test-run.js';
 import { User } from '../models/user.js';
+import { Target, TARGET_STATUS } from '../models/target.js';
 
 const owner = '507f1f77bcf86cd799439010';
 
@@ -42,6 +43,21 @@ describe('test management models', () => {
       status: 'PAUSED',
     });
     await expect(run.validate()).rejects.toMatchObject({ name: 'ValidationError' });
+  });
+
+  it('validates owned pending and verified external targets', async () => {
+    const pending = new Target({
+      owner,
+      name: 'Owned API',
+      baseUrl: 'https://api.example.com',
+      hostname: 'api.example.com',
+      verificationToken: 'a'.repeat(64),
+      status: TARGET_STATUS.PENDING,
+    });
+    await expect(pending.validate()).resolves.toBeUndefined();
+    pending.status = TARGET_STATUS.VERIFIED;
+    pending.verifiedAt = new Date();
+    await expect(pending.validate()).resolves.toBeUndefined();
   });
 
   it('requires a real authentication method and hides user secrets', async () => {

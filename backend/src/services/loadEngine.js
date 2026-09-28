@@ -2,6 +2,7 @@ import process from 'node:process';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Pool } from 'undici';
+import { createPinnedLookup, isForbiddenAddress, validateExternalRequest } from './safe-target.js';
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const MOCK_PATHS = new Set(['/fast', '/slow', '/variable', '/flaky']);
@@ -51,24 +52,55 @@ function parseLocalOrigin(value) {
 }
 
 function validateConfig(input) {
-  const mockServer = parseLocalOrigin(input.mockServerOrigin);
   let target;
   try {
     target = new URL(input.targetUrl);
   } catch {
     throw new LoadTestConfigError('targetUrl must be a valid URL.');
   }
-  if (
-    target.origin !== mockServer.origin ||
-    !MOCK_PATHS.has(target.pathname) ||
-    target.search ||
-    target.hash ||
-    target.username ||
-    target.password
-  ) {
-    throw new LoadTestConfigError(
-      'targetUrl must be an allowed endpoint on the configured local mock server.',
+  const external = input.targetMode === 'EXTERNAL';
+  let request;
+  let pinnedLookup;
+  if (external) {
+    const expectedPort = target.protocol === 'https:' ? '443' : '80';
+    if (
+      !['http:', 'https:'].includes(target.protocol) ||
+      (target.port && target.port !== expectedPort) ||
+      target.username ||
+      target.password ||
+      target.hash ||
+      !Array.isArray(input.resolvedAddresses) ||
+      input.resolvedAddresses.length === 0 ||
+      input.resolvedAddresses.some(
+        ({ address, family }) => ![4, 6].includes(family) || isForbiddenAddress(address),
+      )
+    ) {
+      throw new LoadTestConfigError('External target safety validation failed.');
+    }
+    try {
+      request = validateExternalRequest(input.method, input.requestHeaders, input.requestBody);
+    } catch {
+      throw new LoadTestConfigError('External request configuration is invalid.');
+    }
+    pinnedLookup = createPinnedLookup(
+      target.hostname.replace(/^\[|\]$/g, ''),
+      input.resolvedAddresses,
     );
+  } else {
+    const mockServer = parseLocalOrigin(input.mockServerOrigin);
+    if (
+      target.origin !== mockServer.origin ||
+      !MOCK_PATHS.has(target.pathname) ||
+      target.search ||
+      target.hash ||
+      target.username ||
+      target.password
+    ) {
+      throw new LoadTestConfigError(
+        'targetUrl must be an allowed endpoint on the configured local mock server.',
+      );
+    }
+    request = { method: 'GET', headers: {}, body: undefined };
   }
 
   const virtualUsers = requireInteger(
@@ -118,6 +150,8 @@ function validateConfig(input) {
 
   return {
     target,
+    request,
+    pinnedLookup,
     virtualUsers,
     durationMs,
     rampUpMs,
@@ -280,6 +314,7 @@ export async function runLoadTest(input) {
     headersTimeout: config.requestTimeoutMs,
     bodyTimeout: config.requestTimeoutMs,
     maxResponseSize: LOAD_LIMITS.maxResponseBytes,
+    ...(config.pinnedLookup ? { connect: { lookup: config.pinnedLookup } } : {}),
   });
   let snapshotPromise = Promise.resolve();
   let snapshotPending = false;
@@ -321,15 +356,17 @@ export async function runLoadTest(input) {
 
     try {
       const { statusCode, body } = await pool.request({
-        path: config.target.pathname,
-        method: 'GET',
+        path: `${config.target.pathname}${config.target.search}`,
+        method: config.request.method,
+        headers: config.request.headers,
+        body: config.request.body,
         signal,
       });
       await body.dump({ limit: LOAD_LIMITS.maxResponseBytes });
       const latency = performance.now() - requestStartedAt;
       metrics.totalRequests += 1;
       metrics.recordLatency(latency);
-      if (statusCode >= 200 && statusCode < 400) metrics.successes += 1;
+      if (statusCode >= 200 && statusCode < 300) metrics.successes += 1;
       else metrics.httpErrors += 1;
     } catch (error) {
       if (!runController.signal.aborted) {

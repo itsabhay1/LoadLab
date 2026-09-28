@@ -5,6 +5,7 @@ import {
   ChevronRight,
   FlaskConical,
   Gauge,
+  Globe2,
   History,
   Menu,
   Moon,
@@ -84,6 +85,14 @@ export function DashboardLayout() {
             >
               <FlaskConical size={18} />
               Test plans
+            </NavLink>
+            <NavLink
+              to="/targets"
+              onClick={() => setMenuOpen(false)}
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+            >
+              <Globe2 size={18} />
+              Verified targets
             </NavLink>
             <NavLink
               to="/history"

@@ -5,6 +5,7 @@ import { NotFound } from './pages/not-found';
 import { Overview } from './pages/overview';
 import { Setup } from './pages/setup';
 import { TestPlans } from './pages/test-plans';
+import { Targets } from './pages/targets';
 import { RunHistory } from './pages/run-history';
 import { Login } from './pages/login';
 import { Register } from './pages/register';
@@ -33,6 +34,7 @@ export function App() {
           <Route element={<DashboardLayout />}>
             <Route index element={<Overview />} />
             <Route path="plans" element={<TestPlans />} />
+            <Route path="targets" element={<Targets />} />
             <Route path="history" element={<RunHistory />} />
             <Route path="runs/:runId" element={<RunDetails />} />
             <Route path="runs/:runId/live" element={<LiveRun />} />

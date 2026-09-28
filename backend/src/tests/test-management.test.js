@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     findOneAndDelete: vi.fn(),
   },
   run: { exists: vi.fn(), find: vi.fn(), findOne: vi.fn() },
+  target: { findOne: vi.fn() },
   startTestRun: vi.fn(),
   cancelTestRun: vi.fn(),
 }));
@@ -26,6 +27,10 @@ vi.mock('../middleware/auth.js', () => ({
   createAccessToken: vi.fn(() => 'token'),
 }));
 vi.mock('../models/test-plan.js', () => ({ TestPlan: mocks.plan }));
+vi.mock('../models/target.js', () => ({
+  TARGET_STATUS: { PENDING: 'PENDING', VERIFIED: 'VERIFIED' },
+  Target: mocks.target,
+}));
 vi.mock('../models/test-run.js', () => ({
   ACTIVE_RUN_STATUSES: ['QUEUED', 'RUNNING'],
   TestRun: mocks.run,
@@ -48,6 +53,7 @@ const config = {
 };
 const planId = '507f1f77bcf86cd799439011';
 const runId = '507f1f77bcf86cd799439012';
+const targetId = '507f1f77bcf86cd799439013';
 const input = {
   name: 'Fast endpoint',
   targetUrl: 'http://127.0.0.1:5050/fast',
@@ -82,6 +88,14 @@ beforeEach(() => {
   mocks.run.exists.mockResolvedValue(false);
   mocks.run.find.mockReturnValue(list([]));
   mocks.run.findOne.mockReturnValue(lean({ _id: runId, owner: ownerA, status: 'COMPLETED' }));
+  mocks.target.findOne.mockReturnValue(
+    lean({
+      _id: targetId,
+      owner: ownerA,
+      baseUrl: 'https://api.example.com',
+      status: 'VERIFIED',
+    }),
+  );
   mocks.startTestRun.mockResolvedValue({ _id: runId, status: 'QUEUED' });
   mocks.cancelTestRun.mockResolvedValue();
 });
@@ -90,7 +104,9 @@ describe('test management API', () => {
   it('creates, lists, updates and deletes only owner-scoped plans', async () => {
     const app = createApp(config);
     expect((await request(app).post('/api/v1/plans').send(input)).status).toBe(201);
-    expect(mocks.plan.create).toHaveBeenCalledWith({ ...input, owner: ownerA });
+    expect(mocks.plan.create).toHaveBeenCalledWith(
+      expect.objectContaining({ ...input, owner: ownerA, targetMode: 'LOCAL', method: 'GET' }),
+    );
     expect((await request(app).get('/api/v1/plans')).body.plans).toHaveLength(1);
     expect(mocks.plan.find).toHaveBeenCalledWith({ owner: ownerA });
     const updated = await request(app)
@@ -118,14 +134,95 @@ describe('test management API', () => {
     expect(mocks.plan.create).not.toHaveBeenCalled();
   });
 
+  it('keeps local mock plans disabled in production', async () => {
+    const response = await request(createApp({ ...config, NODE_ENV: 'production' }))
+      .post('/api/v1/plans')
+      .send(input);
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('LOCAL_TARGET_DISABLED');
+    expect(mocks.plan.create).not.toHaveBeenCalled();
+  });
+
   it('starts and cancels execution asynchronously with the authenticated owner', async () => {
     const app = createApp(config);
     const started = await request(app).post(`/api/v1/plans/${planId}/runs`);
     expect(started.status).toBe(202);
-    expect(mocks.startTestRun).toHaveBeenCalledWith(planId, ownerA, config.MOCK_SERVER_URL);
+    expect(mocks.startTestRun).toHaveBeenCalledWith(
+      planId,
+      ownerA,
+      config.MOCK_SERVER_URL,
+      config.NODE_ENV,
+    );
     const cancelled = await request(app).post(`/api/v1/runs/${runId}/cancel`);
     expect(cancelled.status).toBe(202);
     expect(mocks.cancelTestRun).toHaveBeenCalledWith(runId, ownerA);
+  });
+
+  it('creates a plan only from an owned verified external target', async () => {
+    const external = {
+      ...input,
+      targetMode: 'EXTERNAL',
+      targetUrl: undefined,
+      targetId,
+      endpointPath: '/api/products?q=loadlab',
+      method: 'POST',
+      requestHeaders: { Authorization: 'Bearer example' },
+      requestBody: { sample: true },
+    };
+    const response = await request(createApp(config)).post('/api/v1/plans').send(external);
+    expect(response.status).toBe(201);
+    expect(mocks.target.findOne).toHaveBeenCalledWith({
+      _id: targetId,
+      owner: ownerA,
+      status: 'VERIFIED',
+    });
+    expect(mocks.plan.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: ownerA,
+        target: targetId,
+        targetMode: 'EXTERNAL',
+        targetUrl: 'https://api.example.com/api/products?q=loadlab',
+        method: 'POST',
+        requestHeaders: { authorization: 'Bearer example', 'content-type': 'application/json' },
+      }),
+    );
+  });
+
+  it('cannot use another user or unverified target in a plan', async () => {
+    mocks.target.findOne.mockReturnValue(lean(null));
+    const response = await request(createApp(config))
+      .post('/api/v1/plans')
+      .set('x-test-user', ownerB)
+      .send({
+        ...input,
+        targetMode: 'EXTERNAL',
+        targetUrl: undefined,
+        targetId,
+        endpointPath: '/api/products',
+      });
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('TARGET_NOT_VERIFIED');
+    expect(mocks.plan.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects hostname-overriding paths and forbidden headers', async () => {
+    const base = {
+      ...input,
+      targetMode: 'EXTERNAL',
+      targetUrl: undefined,
+      targetId,
+      endpointPath: '/api/products',
+    };
+    const pathResponse = await request(createApp(config))
+      .post('/api/v1/plans')
+      .send({ ...base, endpointPath: '//evil.example/path' });
+    expect(pathResponse.status).toBe(400);
+    expect(pathResponse.body.error.code).toBe('INVALID_ENDPOINT_PATH');
+    const headerResponse = await request(createApp(config))
+      .post('/api/v1/plans')
+      .send({ ...base, requestHeaders: { Host: '127.0.0.1' } });
+    expect(headerResponse.status).toBe(400);
+    expect(headerResponse.body.error.code).toBe('INVALID_HEADERS');
   });
 
   it('returns only owner-scoped run status and history', async () => {
@@ -177,7 +274,12 @@ describe('test management API', () => {
     await request(createApp(config))
       .post(`/api/v1/plans/${planId}/runs`)
       .set('x-test-user', ownerB);
-    expect(mocks.startTestRun).toHaveBeenCalledWith(planId, ownerB, config.MOCK_SERVER_URL);
+    expect(mocks.startTestRun).toHaveBeenCalledWith(
+      planId,
+      ownerB,
+      config.MOCK_SERVER_URL,
+      config.NODE_ENV,
+    );
   });
 
   it('sanitizes database failures', async () => {

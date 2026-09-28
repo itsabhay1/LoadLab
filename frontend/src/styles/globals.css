@@ -1121,18 +1121,31 @@ main {
 .field-wide {
   grid-column: span 3;
 }
-.field input {
+.field input,
+.field select,
+.field textarea {
   width: 100%;
-  height: 40px;
   border: 1px solid var(--border);
   background: var(--background);
   color: var(--foreground);
   border-radius: 7px;
-  padding: 0 11px;
+  padding: 10px 11px;
   font: inherit;
   font-weight: 400;
 }
-.field input:focus {
+.field input,
+.field select {
+  height: 40px;
+}
+.field textarea {
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
@@ -1167,6 +1180,93 @@ main {
   font-size: 10px;
   overflow-wrap: anywhere;
   margin-top: 5px;
+}
+.plan-mode {
+  width: fit-content;
+  margin-top: 10px;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+}
+.plan-mode.external {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+.target-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.target-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.target-status {
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+}
+.target-status.verified {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.target-status.failed,
+.target-failure {
+  color: #a44135;
+  background: #fff0ed;
+}
+.verification-instructions {
+  display: grid;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+}
+.token-row code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+  font-size: 9px;
+}
+.verification-url {
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+}
+.target-failure {
+  margin-top: 14px;
+  border-radius: 7px;
+  padding: 9px 10px;
+  font-size: 11px;
+}
+.dark .target-status.failed,
+.dark .target-failure {
+  color: #f4b1a7;
+  background: #402724;
+}
+.target-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
 }
 .plan-stats {
   display: grid;
@@ -1424,6 +1524,9 @@ main {
   .field-wide {
     grid-column: span 2;
   }
+  .target-grid {
+    grid-template-columns: 1fr;
+  }
   .history-row .p-6 {
     grid-template-columns: 1fr;
   }
@@ -1443,6 +1546,9 @@ main {
   }
   .field-wide {
     grid-column: span 1;
+  }
+  .target-form {
+    grid-template-columns: 1fr;
   }
   .latest-run-card .p-6 {
     align-items: flex-start;

@@ -14,7 +14,11 @@ export const ACTIVE_RUN_STATUSES = [RUN_STATUS.QUEUED, RUN_STATUS.RUNNING];
 const configurationSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
+    targetMode: { type: String, enum: ['LOCAL', 'EXTERNAL'], default: 'LOCAL' },
     targetUrl: { type: String, required: true },
+    method: { type: String, default: 'GET' },
+    requestHeaders: { type: mongoose.Schema.Types.Mixed, default: {} },
+    requestBody: mongoose.Schema.Types.Mixed,
     virtualUsers: { type: Number, required: true },
     durationMs: { type: Number, required: true },
     rampUpMs: { type: Number, required: true },

@@ -3,6 +3,14 @@ import { EventEmitter } from 'node:events';
 import { logger, errorKind } from '../config/logger.js';
 import { TestPlan } from '../models/test-plan.js';
 import { ACTIVE_RUN_STATUSES, RUN_STATUS, TestRun } from '../models/test-run.js';
+import { Target, TARGET_STATUS } from '../models/target.js';
+import {
+  buildExternalTargetUrl,
+  normalizeExternalBaseUrl,
+  resolveSafeTarget,
+  TargetSafetyError,
+  validateExternalRequest,
+} from './safe-target.js';
 import { runLoadTest } from './loadEngine.js';
 
 const MAX_SNAPSHOTS = 60;
@@ -26,10 +34,14 @@ function serviceError(status, code, message) {
   return Object.assign(new Error(message), { status, code, publicMessage: message });
 }
 
-function snapshotPlan(plan) {
+function snapshotPlan(plan, targetUrl = plan.targetUrl) {
   return {
     name: plan.name,
-    targetUrl: plan.targetUrl,
+    targetMode: plan.targetMode ?? 'LOCAL',
+    targetUrl,
+    method: plan.method ?? 'GET',
+    requestHeaders: plan.requestHeaders ?? {},
+    requestBody: plan.requestBody,
     virtualUsers: plan.virtualUsers,
     durationMs: plan.durationMs,
     rampUpMs: plan.rampUpMs,
@@ -134,7 +146,7 @@ async function executeRun(runId, configuration, mockServerOrigin, execution) {
   }
 }
 
-export async function startTestRun(planId, ownerId, mockServerOrigin) {
+export async function startTestRun(planId, ownerId, mockServerOrigin, environment = 'development') {
   if (starting || activeExecution) {
     throw serviceError(409, 'TEST_ALREADY_ACTIVE', 'Another test is already active.');
   }
@@ -143,7 +155,47 @@ export async function startTestRun(planId, ownerId, mockServerOrigin) {
   try {
     const plan = await TestPlan.findOne({ _id: planId, owner: ownerId }).lean();
     if (!plan) throw serviceError(404, 'PLAN_NOT_FOUND', 'Test plan was not found.');
-    const configuration = snapshotPlan(plan);
+    if (plan.targetMode !== 'EXTERNAL' && environment === 'production') {
+      throw serviceError(
+        409,
+        'LOCAL_TARGET_DISABLED',
+        'Local test mode is not available in production.',
+      );
+    }
+    let resolvedAddresses;
+    let targetUrl = plan.targetUrl;
+    if (plan.targetMode === 'EXTERNAL') {
+      const target = await Target.findOne({
+        _id: plan.target,
+        owner: ownerId,
+        status: TARGET_STATUS.VERIFIED,
+      }).lean();
+      if (!target) {
+        throw serviceError(
+          409,
+          'TARGET_UNAVAILABLE',
+          'The verified target is no longer available.',
+        );
+      }
+      try {
+        const normalized = normalizeExternalBaseUrl(target.baseUrl);
+        targetUrl = buildExternalTargetUrl(normalized.baseUrl, plan.endpointPath).href;
+        validateExternalRequest(plan.method, plan.requestHeaders, plan.requestBody);
+        const safeTarget = await resolveSafeTarget(targetUrl);
+        resolvedAddresses = safeTarget.addresses;
+      } catch (error) {
+        if (error instanceof TargetSafetyError) {
+          throw serviceError(
+            409,
+            'TARGET_NO_LONGER_ELIGIBLE',
+            'The verified target no longer passes safety validation.',
+          );
+        }
+        throw error;
+      }
+    }
+    const configuration = snapshotPlan(plan, targetUrl);
+    const executionConfiguration = { ...configuration, resolvedAddresses };
     const run = await TestRun.create({
       plan: plan._id,
       owner: ownerId,
@@ -162,7 +214,7 @@ export async function startTestRun(planId, ownerId, mockServerOrigin) {
       queuedAt: run.queuedAt?.toISOString?.() ?? new Date().toISOString(),
     });
     setImmediate(
-      () => void executeRun(execution.runId, configuration, mockServerOrigin, execution),
+      () => void executeRun(execution.runId, executionConfiguration, mockServerOrigin, execution),
     );
     return run;
   } finally {

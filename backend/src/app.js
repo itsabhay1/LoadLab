@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import healthRoutes from './routes/health-routes.js';
 import testRoutes from './routes/test-routes.js';
 import authRoutes from './routes/auth-routes.js';
+import targetRoutes from './routes/target-routes.js';
 import { requestLogger } from './middleware/request.js';
 import { createHttpError, errorHandler } from './middleware/error.js';
 
@@ -35,6 +36,7 @@ export function createApp(config) {
   });
   app.use('/api/v1', healthRoutes);
   app.use('/api/v1', authRoutes);
+  app.use('/api/v1', targetRoutes);
   app.use('/api/v1', testRoutes);
   app.use((_req, _res, next) => {
     next(createHttpError(404, 'NOT_FOUND', 'The requested resource was not found.'));
