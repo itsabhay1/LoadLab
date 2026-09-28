@@ -3,6 +3,18 @@ import { createApiClient } from './api';
 
 afterEach(() => vi.useRealTimers());
 describe('API client', () => {
+  it('uses a relative API path when no separate backend origin is configured', async () => {
+    const data = {
+      status: 'ok',
+      service: 'loadlab-api',
+      timestamp: new Date().toISOString(),
+      uptime: 1,
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(data)));
+    await createApiClient({ fetchImpl }).health();
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/v1/health');
+  });
+
   it('uses the configured base URL and validates successful responses', async () => {
     const data = {
       status: 'ok',

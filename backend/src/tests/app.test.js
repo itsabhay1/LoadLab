@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import { createApp } from '../app.js';
@@ -14,6 +17,14 @@ vi.mock('../config/logger.js', async (importOriginal) => ({
 }));
 
 const config = { NODE_ENV: 'test', CLIENT_URL: 'http://localhost:5173' };
+const temporaryDirectories = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
+  );
+});
+
 function setup(ready = true) {
   isDatabaseReady.mockResolvedValue(ready);
   return createApp(config);
@@ -32,6 +43,14 @@ describe('HTTP foundation', () => {
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['x-powered-by']).toBeUndefined();
+    expect(res.headers['content-security-policy']).toContain(
+      "script-src 'self' https://accounts.google.com/gsi/client",
+    );
+    expect(res.headers['content-security-policy']).toContain(
+      "connect-src 'self' https://accounts.google.com/gsi/",
+    );
+    expect(res.headers['content-security-policy']).not.toContain('unsafe-eval');
+    expect(res.headers['content-security-policy']).not.toContain(' *');
     expect(isDatabaseReady).not.toHaveBeenCalled();
   });
   it('readiness checks the database', async () => {
@@ -71,6 +90,38 @@ describe('HTTP foundation', () => {
     expect(JSON.stringify(res.body)).not.toContain('secret-token');
     expect(JSON.stringify(logger.info.mock.calls)).not.toContain('secret-token');
   });
+  it('serves the production frontend while preserving backend route boundaries', async () => {
+    const frontendDistPath = await mkdtemp(path.join(os.tmpdir(), 'loadlab-frontend-'));
+    temporaryDirectories.push(frontendDistPath);
+    await mkdir(path.join(frontendDistPath, 'assets'));
+    await writeFile(
+      path.join(frontendDistPath, 'index.html'),
+      '<!doctype html><html><body>LoadLab production shell</body></html>',
+    );
+    await writeFile(path.join(frontendDistPath, 'assets', 'app.js'), 'window.LOADLAB = true;');
+    const app = createApp({ ...config, NODE_ENV: 'production' }, { frontendDistPath });
+
+    for (const route of [
+      '/',
+      '/login',
+      '/register',
+      '/overview',
+      '/plans',
+      '/targets',
+      '/history',
+      '/compare',
+      '/runs/run-id',
+      '/runs/run-id/live',
+    ]) {
+      expect((await request(app).get(route)).text).toContain('LoadLab production shell');
+    }
+    expect((await request(app).get('/assets/app.js')).text).toContain('window.LOADLAB');
+    expect((await request(app).get('/api/v1/health')).body.status).toBe('ok');
+    const missingApi = await request(app).get('/api/v1/missing');
+    expect(missingApi.body.error.code).toBe('AUTH_REQUIRED');
+    expect(missingApi.text).not.toContain('LoadLab production shell');
+    expect((await request(app).get('/socket.io/missing')).body.error.code).toBe('NOT_FOUND');
+  });
   it('allows the configured frontend and exposes request IDs', async () => {
     const res = await request(setup()).get('/api/v1/health').set('Origin', config.CLIENT_URL);
     expect(res.headers['access-control-allow-origin']).toBe(config.CLIENT_URL);
@@ -89,6 +140,21 @@ describe('HTTP foundation', () => {
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('ORIGIN_NOT_ALLOWED');
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+  it('allows only the exact configured production origin and trusts one proxy hop', async () => {
+    const productionOrigin = 'https://loadlab.example.com';
+    const app = createApp({ ...config, NODE_ENV: 'production', CLIENT_URL: productionOrigin });
+    expect(app.get('trust proxy')).toBe(1);
+    const allowed = await request(app).get('/api/v1/health').set('Origin', productionOrigin);
+    expect(allowed.headers['access-control-allow-origin']).toBe(productionOrigin);
+    expect(allowed.headers['access-control-allow-credentials']).toBe('true');
+    expect(allowed.headers['access-control-allow-origin']).not.toBe('*');
+    const rejected = await request(app)
+      .get('/api/v1/health')
+      .set('Origin', 'https://unrelated.example.com');
+    expect(rejected.status).toBe(403);
+    expect(rejected.headers['access-control-allow-origin']).toBeUndefined();
+    expect(setup().get('trust proxy')).toBe(false);
   });
   it('rejects malformed JSON and oversized bodies', async () => {
     const app = setup();

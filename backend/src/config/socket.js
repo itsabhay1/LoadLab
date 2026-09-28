@@ -12,10 +12,12 @@ export function createSocketServer(httpServer, config) {
     cors: {
       origin: config.CLIENT_URL,
       methods: ['GET', 'POST'],
+      credentials: true,
     },
     allowRequest(request, callback) {
       const originAllowed = !request.headers.origin || request.headers.origin === config.CLIENT_URL;
-      const addressAllowed = LOCAL_ADDRESSES.has(request.socket.remoteAddress);
+      const addressAllowed =
+        config.NODE_ENV === 'production' || LOCAL_ADDRESSES.has(request.socket.remoteAddress);
       callback(null, originAllowed && addressAllowed);
     },
   });

@@ -40,6 +40,7 @@ let signals;
 let server;
 beforeEach(() => {
   vi.resetModules();
+  mocks.config.NODE_ENV = 'test';
   signals = new EventEmitter();
   mocks.process.once.mockImplementation((event, handler) => signals.once(event, handler));
   mocks.parseEnv.mockReturnValue(mocks.config);
@@ -87,6 +88,14 @@ describe('server startup and shutdown', () => {
       headersTimeout: 10000,
       keepAliveTimeout: 5000,
     });
+    signals.emit('SIGTERM');
+    await vi.waitFor(() => expect(mocks.process.exit).toHaveBeenCalledWith(0));
+  });
+
+  it('binds to all container interfaces in production', async () => {
+    mocks.config.NODE_ENV = 'production';
+    await boot();
+    expect(server.listen).toHaveBeenCalledWith(5000, '0.0.0.0', expect.any(Function));
     signals.emit('SIGTERM');
     await vi.waitFor(() => expect(mocks.process.exit).toHaveBeenCalledWith(0));
   });

@@ -52,4 +52,14 @@ describe('environment validation', () => {
       'MONGODB_URI, CLIENT_URL, JWT_ACCESS_SECRET, JWT_REFRESH_SECRET',
     );
   });
+  it('requires Google authentication configuration in production', () => {
+    expect(() => parseEnv({ ...valid, NODE_ENV: 'production' })).toThrow('GOOGLE_CLIENT_ID');
+    expect(
+      parseEnv({
+        ...valid,
+        NODE_ENV: 'production',
+        GOOGLE_CLIENT_ID: 'loadlab.apps.googleusercontent.com',
+      }).GOOGLE_CLIENT_ID,
+    ).toBe('loadlab.apps.googleusercontent.com');
+  });
 });

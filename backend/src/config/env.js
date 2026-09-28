@@ -48,6 +48,13 @@ const schema = z
         message: 'Refresh and access secrets must be different.',
       });
     }
+    if (value.NODE_ENV === 'production' && !value.GOOGLE_CLIENT_ID) {
+      context.addIssue({
+        code: 'custom',
+        path: ['GOOGLE_CLIENT_ID'],
+        message: 'Google client ID is required in production.',
+      });
+    }
   });
 
 export function parseEnv(input) {

@@ -19,10 +19,13 @@ const ownerA = '507f1f77bcf86cd799439010';
 const ownerB = '507f1f77bcf86cd799439020';
 
 vi.mock('../middleware/auth.js', () => ({
-  authenticate(req, _res, next) {
+  authenticate(req, res, next) {
+    if (req.get('x-test-unauthenticated') === 'true') {
+      return res.status(401).json({ error: { code: 'AUTH_REQUIRED' } });
+    }
     const userId = req.get('x-test-user') ?? ownerA;
     req.auth = { userId, user: { _id: userId, name: 'Test User', email: 'test@example.com' } };
-    next();
+    return next();
   },
   createAccessToken: vi.fn(() => 'token'),
 }));
@@ -170,6 +173,36 @@ describe('test management API', () => {
     expect(mocks.cancelTestRun).toHaveBeenCalledWith(runId, ownerA);
   });
 
+  it('starts a production external run and cancels it without a loopback-source requirement', async () => {
+    const productionConfig = { ...config, NODE_ENV: 'production' };
+    const app = createApp(productionConfig);
+    const started = await request(app)
+      .post(`/api/v1/plans/${planId}/runs`)
+      .set('X-Forwarded-For', '203.0.113.10');
+    expect(started.status).toBe(202);
+    expect(mocks.startTestRun).toHaveBeenCalledWith(
+      planId,
+      ownerA,
+      config.MOCK_SERVER_URL,
+      'production',
+    );
+
+    const cancelled = await request(app)
+      .post(`/api/v1/runs/${runId}/cancel`)
+      .set('X-Forwarded-For', '203.0.113.10');
+    expect(cancelled.status).toBe(202);
+    expect(mocks.cancelTestRun).toHaveBeenCalledWith(runId, ownerA);
+  });
+
+  it('rejects an unauthenticated run start', async () => {
+    const response = await request(createApp({ ...config, NODE_ENV: 'production' }))
+      .post(`/api/v1/plans/${planId}/runs`)
+      .set('x-test-unauthenticated', 'true');
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('AUTH_REQUIRED');
+    expect(mocks.startTestRun).not.toHaveBeenCalled();
+  });
+
   it('creates a plan only from an owned verified external target', async () => {
     const external = {
       ...input,
@@ -303,15 +336,24 @@ describe('test management API', () => {
     expect(mocks.cancelTestRun).toHaveBeenCalledWith(runId, ownerA);
   });
 
-  it('passes the requester identity when starting a plan owned by another user ID', async () => {
-    await request(createApp(config))
+  it('rejects a run start for another user or an unowned plan', async () => {
+    mocks.startTestRun.mockRejectedValue(
+      Object.assign(new Error('not found'), {
+        status: 404,
+        code: 'PLAN_NOT_FOUND',
+        publicMessage: 'Test plan was not found.',
+      }),
+    );
+    const response = await request(createApp({ ...config, NODE_ENV: 'production' }))
       .post(`/api/v1/plans/${planId}/runs`)
       .set('x-test-user', ownerB);
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe('PLAN_NOT_FOUND');
     expect(mocks.startTestRun).toHaveBeenCalledWith(
       planId,
       ownerB,
       config.MOCK_SERVER_URL,
-      config.NODE_ENV,
+      'production',
     );
   });
 

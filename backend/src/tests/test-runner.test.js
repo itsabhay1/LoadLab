@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  TargetSafetyError: class TargetSafetyError extends Error {},
   planFindOne: vi.fn(),
   targetFindOne: vi.fn(),
   runCreate: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock('../models/target.js', () => ({
   Target: { findOne: mocks.targetFindOne },
 }));
 vi.mock('../services/safe-target.js', () => ({
-  TargetSafetyError: class TargetSafetyError extends Error {},
+  TargetSafetyError: mocks.TargetSafetyError,
   normalizeExternalBaseUrl: (value) => ({ baseUrl: value, hostname: new URL(value).hostname }),
   buildExternalTargetUrl: (baseUrl, path) => new URL(path, baseUrl),
   validateExternalRequest: (method, headers, body) => ({ method, headers, body }),
@@ -208,7 +209,7 @@ describe('test runner persistence', () => {
       }),
     });
     const service = await runner();
-    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
+    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050', 'production');
     expect(mocks.targetFindOne).toHaveBeenCalledWith({
       _id: targetId,
       owner: ownerId,
@@ -237,8 +238,33 @@ describe('test runner persistence', () => {
     });
     const service = await runner();
     await expect(
-      service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050'),
+      service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050', 'production'),
     ).rejects.toMatchObject({ code: 'TARGET_UNAVAILABLE' });
+    expect(mocks.runCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects an external target that fails production safety revalidation', async () => {
+    mocks.planFindOne.mockReturnValue({
+      lean: vi.fn().mockResolvedValue({
+        ...plan,
+        targetMode: 'EXTERNAL',
+        target: '507f1f77bcf86cd799439099',
+        endpointPath: '/api/products',
+      }),
+    });
+    mocks.targetFindOne.mockReturnValue({
+      lean: vi.fn().mockResolvedValue({
+        _id: '507f1f77bcf86cd799439099',
+        owner: ownerId,
+        baseUrl: 'https://api.example.com',
+        status: 'VERIFIED',
+      }),
+    });
+    mocks.resolveSafeTarget.mockRejectedValue(new mocks.TargetSafetyError('unsafe target'));
+    const service = await runner();
+    await expect(
+      service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050', 'production'),
+    ).rejects.toMatchObject({ code: 'TARGET_NO_LONGER_ELIGIBLE' });
     expect(mocks.runCreate).not.toHaveBeenCalled();
   });
 

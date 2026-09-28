@@ -92,9 +92,10 @@ export async function startServer() {
     server.requestTimeout = 15000;
     server.headersTimeout = 10000;
     server.keepAliveTimeout = 5000;
+    const host = config.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1';
     await new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(config.PORT, '127.0.0.1', () => {
+      server.listen(config.PORT, host, () => {
         server.off('error', reject);
         resolve();
       });
@@ -105,7 +106,7 @@ export async function startServer() {
     });
     logger.info({
       event: 'server_started',
-      host: '127.0.0.1',
+      host,
       port: config.PORT,
       environment: config.NODE_ENV,
     });

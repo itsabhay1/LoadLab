@@ -46,6 +46,10 @@ beforeEach(() => {
 describe('authenticated run socket', () => {
   it('refreshes and reconnects with the latest access token after expiry', async () => {
     const socket = createRunSocket();
+    expect(mocks.io).toHaveBeenCalledWith(
+      window.location.origin,
+      expect.objectContaining({ autoConnect: false }),
+    );
     expect(socket.auth).toEqual({ token: 'initial-access' });
     mocks.getAccessToken.mockReturnValue('fresh-access');
 

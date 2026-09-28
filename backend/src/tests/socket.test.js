@@ -69,6 +69,25 @@ function subscribe(client, runId) {
 }
 
 describe('authenticated live run socket', () => {
+  it('allows hosted production clients only from the configured browser origin', async () => {
+    const socketServer = createSocketServer(createServer(), {
+      ...config,
+      NODE_ENV: 'production',
+    });
+    servers.push(socketServer);
+    const allowRequest = socketServer.io.engine.opts.allowRequest;
+    const allowed = (origin) =>
+      new Promise((resolve) => {
+        allowRequest(
+          { headers: { origin }, socket: { remoteAddress: '203.0.113.10' } },
+          (_error, accepted) => resolve(accepted),
+        );
+      });
+
+    await expect(allowed(config.CLIENT_URL)).resolves.toBe(true);
+    await expect(allowed('https://example.invalid')).resolves.toBe(false);
+  });
+
   it('authenticates and broadcasts only to an authorized owner room', async () => {
     const client = await setup();
     const runId = new mongoose.Types.ObjectId().toString();

@@ -94,6 +94,7 @@ describe('email authentication', () => {
     await expect(bcrypt.compare(credentials.password, created.password)).resolves.toBe(true);
     expect(response.body.user).toEqual({ id: userId, name: user.name, email: user.email });
     expect(response.body.password).toBeUndefined();
+    expect(response.body.refreshToken).toBeUndefined();
     expect(jwt.verify(response.body.accessToken, config.JWT_ACCESS_SECRET)).toMatchObject({
       sub: userId,
       type: 'access',
@@ -118,6 +119,10 @@ describe('email authentication', () => {
       .send({ email: user.email, password: credentials.password });
     expect(success.status).toBe(200);
     expect(refreshCookie(success)).toMatch(/HttpOnly/);
+    expect(refreshCookie(success)).toMatch(/Path=\/api\/v1\/auth\/refresh/);
+    expect(refreshCookie(success)).toMatch(/SameSite=Lax/);
+    expect(refreshCookie(success)).not.toMatch(/; Secure/);
+    expect(success.body.refreshToken).toBeUndefined();
     mocks.findOne.mockReturnValueOnce(query(null));
     const failure = await request(createApp(config))
       .post('/api/v1/auth/login')
@@ -215,6 +220,7 @@ describe('refresh sessions', () => {
       sub: userId,
       type: 'access',
     });
+    expect(response.body.refreshToken).toBeUndefined();
   });
 
   it('requires a cookie and rejects invalid, expired and access tokens', async () => {
@@ -272,6 +278,32 @@ describe('refresh sessions', () => {
     expect(logout.status).toBe(204);
     expect(refreshCookie(logout)).toMatch(/loadlab_refresh=;/);
     expect(refreshCookie(logout)).toMatch(/Path=\/api\/v1\/auth\/refresh/);
+    expect(refreshCookie(logout)).toMatch(/HttpOnly/);
+    expect(refreshCookie(logout)).toMatch(/SameSite=Lax/);
+    expect(refreshCookie(logout)).not.toMatch(/; Secure/);
+  });
+
+  it('uses matching secure cookie attributes for production login and logout', async () => {
+    const password = await bcrypt.hash(credentials.password, 4);
+    mocks.findOne.mockReturnValueOnce(query({ ...user, password }));
+    const productionConfig = { ...config, NODE_ENV: 'production' };
+    const loginResponse = await request(createApp(productionConfig))
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: credentials.password });
+    const loginCookie = refreshCookie(loginResponse);
+    expect(loginCookie).toMatch(/HttpOnly/);
+    expect(loginCookie).toMatch(/; Secure/);
+    expect(loginCookie).toMatch(/SameSite=Lax/);
+    expect(loginCookie).toMatch(/Path=\/api\/v1\/auth\/refresh/);
+    expect(loginResponse.body.refreshToken).toBeUndefined();
+
+    const logoutResponse = await request(createApp(productionConfig)).post('/api/v1/auth/logout');
+    const logoutCookie = refreshCookie(logoutResponse);
+    expect(logoutCookie).toMatch(/loadlab_refresh=;/);
+    expect(logoutCookie).toMatch(/HttpOnly/);
+    expect(logoutCookie).toMatch(/; Secure/);
+    expect(logoutCookie).toMatch(/SameSite=Lax/);
+    expect(logoutCookie).toMatch(/Path=\/api\/v1\/auth\/refresh/);
   });
 });
 
@@ -299,6 +331,8 @@ describe('Google authentication', () => {
     expect(refreshCookie(response)).toMatch(/HttpOnly/);
     expect(refreshCookie(response)).toMatch(/; Secure/);
     expect(refreshCookie(response)).toMatch(/SameSite=Lax/);
+    expect(refreshCookie(response)).toMatch(/Path=\/api\/v1\/auth\/refresh/);
+    expect(response.body.refreshToken).toBeUndefined();
   });
 
   it('returns an existing user found by the stable Google subject', async () => {
