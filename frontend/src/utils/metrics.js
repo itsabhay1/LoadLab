@@ -1,4 +1,6 @@
 export const ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING']);
+export const RPS_HELP =
+  'Completed request attempts per second, including successful and failed requests.';
 
 export function errorRate(metrics) {
   if (!metrics?.totalRequests) return 0;

@@ -1,39 +1,36 @@
 import {
   Activity,
-  ArrowUpRight,
-  BookOpen,
   ChevronRight,
   FlaskConical,
   Gauge,
   Globe2,
+  GitCompareArrows,
   History,
   Menu,
-  Moon,
-  Sun,
   LogOut,
   X,
 } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useState } from 'react';
 import { Button } from './ui/button';
-import { useTheme } from '../hooks/use-theme';
 import { useServiceStatus } from '../hooks/use-service-status';
 import { useAuth } from '../context/auth-context';
+import { ThemeControl } from './theme-control';
+import { AppFooter } from './app-footer';
 
 export function DashboardLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const { theme, toggleTheme } = useTheme();
   const status = useServiceStatus();
   const { user, logout } = useAuth();
   const connected = status.health?.status === 'fulfilled';
-  const ready = connected && status.ready?.status === 'fulfilled';
+  const databaseReady = status.ready?.status === 'fulfilled';
+  const ready = connected && databaseReady;
   const connectionLabel = !status.checkedAt
-    ? 'Checking connection'
+    ? 'Checking system'
     : ready
-      ? 'All systems ready'
-      : connected
-        ? 'API online · database unavailable'
-        : 'API disconnected';
+      ? 'System operational'
+      : 'Service issue';
+  const connectionDetails = `API: ${connected ? 'Connected' : 'Unavailable'} · Database: ${databaseReady ? 'Connected' : 'Unavailable'}`;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -62,8 +59,8 @@ export function DashboardLayout() {
           <div className="workspace">
             <span className="workspace-avatar">L</span>
             <div>
-              <strong>Local workspace</strong>
-              <span>Development environment</span>
+              <strong>Personal workspace</strong>
+              <span>Private performance data</span>
             </div>
             <ChevronRight size={15} />
           </div>
@@ -102,22 +99,21 @@ export function DashboardLayout() {
               <History size={18} />
               Run history
             </NavLink>
+            <NavLink
+              to="/compare"
+              onClick={() => setMenuOpen(false)}
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+            >
+              <GitCompareArrows size={18} />
+              Compare runs
+            </NavLink>
           </nav>
           <div className="sidebar-bottom">
-            <div className="phase-note">
+            <div className="sidebar-promo">
               <span className="eyebrow">LIVE LOAD TESTING</span>
-              <strong>Local, controlled and observable.</strong>
-              <p>Run safe mock-server tests and inspect aggregate metrics live.</p>
-              <div className="phase-track">
-                <span />
-              </div>
-              <span className="text-xs text-muted-foreground">Phase 4 · Dashboard</span>
+              <strong>Authorized, controlled and observable.</strong>
+              <p>Test verified APIs and inspect real performance metrics.</p>
             </div>
-            <NavLink className="nav-item" to="/setup" onClick={() => setMenuOpen(false)}>
-              <BookOpen size={18} />
-              Setup guide
-              <ArrowUpRight size={15} className="ml-auto" />
-            </NavLink>
             <div className="version">
               LoadLab <span>v0.1.0</span>
             </div>
@@ -132,17 +128,17 @@ export function DashboardLayout() {
             <span>Performance workspace</span>
           </div>
           <div className="header-actions">
-            <span className="environment-badge">
-              {import.meta.env.DEV ? 'Development' : 'Production build'}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-              onClick={toggleTheme}
+            <span
+              className="system-status"
+              title={connectionDetails}
+              aria-label={connectionDetails}
             >
-              {theme === 'dark' ? <Sun /> : <Moon />}
-            </Button>
+              <span
+                className={`status-dot ${ready ? 'online' : !status.checkedAt ? 'pending' : 'offline'}`}
+              />
+              {connectionLabel}
+            </span>
+            <ThemeControl />
             <span className="user-name">{user.name}</span>
             <div className="profile-avatar" aria-label={`${user.name}'s account`}>
               {user.name.charAt(0).toUpperCase()}
@@ -155,15 +151,7 @@ export function DashboardLayout() {
         <main id="main" tabIndex={-1}>
           <Outlet context={status} />
         </main>
-        <footer className="page-footer">
-          <span className="inline-flex items-center gap-2">
-            <span
-              className={`status-dot ${ready ? 'online' : !status.checkedAt ? 'pending' : 'offline'}`}
-            />
-            {connectionLabel}
-          </span>
-          <span>Built for better APIs.</span>
-        </footer>
+        <AppFooter />
       </div>
     </div>
   );

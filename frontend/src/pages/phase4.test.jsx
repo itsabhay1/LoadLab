@@ -24,6 +24,7 @@ vi.mock('../services/api', async (importOriginal) => {
       startRun: vi.fn(),
       listRuns: vi.fn(),
       getRun: vi.fn(),
+      exportRun: vi.fn(),
       cancelRun: vi.fn(),
     },
   };
@@ -74,7 +75,7 @@ beforeEach(() => {
   window.confirm = vi.fn(() => true);
 });
 
-describe('Phase 4 dashboard actions', () => {
+describe('dashboard actions', () => {
   it('creates and starts a test plan', async () => {
     api.createPlan.mockResolvedValue({ plan });
     api.startRun.mockResolvedValue({ runId: run._id, status: 'QUEUED' });
@@ -159,10 +160,27 @@ describe('Phase 4 dashboard actions', () => {
         p95LatencyMs: 7,
         activeVirtualUsers: 10,
         elapsedMs: 5000,
+        runtime: {
+          cpuUtilizationPercent: 17.5,
+          peakRssMb: 96,
+          peakHeapUsedMb: 42,
+          eventLoopDelayMeanMs: 1.2,
+          eventLoopDelayP95Ms: 2.4,
+          eventLoopDelayMaxMs: 4.8,
+        },
       },
     });
     expect(await screen.findByText('42')).toBeInTheDocument();
     expect(screen.getByText('21')).toBeInTheDocument();
+    expect(screen.getByText('Target/API Performance')).toBeInTheDocument();
+    expect(screen.getByText('Load Generator Health')).toBeInTheDocument();
+    expect(screen.getByText('Load Generator CPU')).toBeInTheDocument();
+    expect(screen.getByText('17.5%')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Completed request attempts per second, including successful and failed requests.',
+      ),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel test' }));
     expect(api.cancelRun).toHaveBeenCalledWith(run._id);
     handlers.get('disconnect')();
@@ -187,6 +205,14 @@ describe('Phase 4 dashboard actions', () => {
           p95LatencyMs: 5,
           activeVirtualUsers: 10,
           elapsedMs: 10000,
+          runtime: {
+            cpuUtilizationPercent: 20,
+            peakRssMb: 100,
+            peakHeapUsedMb: 50,
+            eventLoopDelayMeanMs: 1,
+            eventLoopDelayP95Ms: 2,
+            eventLoopDelayMaxMs: 3,
+          },
         },
       },
     });
@@ -194,5 +220,8 @@ describe('Phase 4 dashboard actions', () => {
     const label = await screen.findByText('Peak virtual users');
     expect(label.parentElement).toHaveTextContent('10');
     expect(screen.queryByText('Active users')).not.toBeInTheDocument();
+    expect(screen.getByText('Load Generator Peak Memory')).toBeInTheDocument();
+    expect(screen.getByText('Load Generator Event Loop Mean')).toBeInTheDocument();
+    expect(screen.queryByText('CPU utilization')).not.toBeInTheDocument();
   });
 });

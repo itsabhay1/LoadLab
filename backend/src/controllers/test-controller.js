@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { z } from 'zod';
 import { createHttpError } from '../middleware/error.js';
 import { TestPlan } from '../models/test-plan.js';
-import { ACTIVE_RUN_STATUSES, TestRun } from '../models/test-run.js';
+import { ACTIVE_RUN_STATUSES, RUN_STATUS, TestRun } from '../models/test-run.js';
 import { Target, TARGET_STATUS } from '../models/target.js';
 import {
   buildExternalTargetUrl,
@@ -291,12 +291,59 @@ export async function getRun(req, res, next) {
 export async function listRuns(req, res, next) {
   try {
     const filter = { owner: req.auth.userId };
+    if (req.query.status) {
+      if (!Object.values(RUN_STATUS).includes(req.query.status)) {
+        throw createHttpError(400, 'INVALID_RUN_FILTER', 'Run status filter is invalid.');
+      }
+      filter.status = req.query.status;
+    }
     if (req.query.planId) {
       requireId(req.query.planId);
       filter.plan = req.query.planId;
     }
-    const runs = await TestRun.find(filter).sort({ createdAt: -1 }).limit(100).lean();
-    return res.json({ runs });
+    if (req.query.targetId) {
+      requireId(req.query.targetId);
+      const plans = await TestPlan.find({
+        owner: req.auth.userId,
+        target: req.query.targetId,
+      })
+        .select('_id')
+        .lean();
+      const planIds = plans.map((plan) => plan._id);
+      filter.plan = req.query.planId
+        ? planIds.some((id) => String(id) === req.query.planId)
+          ? req.query.planId
+          : { $in: [] }
+        : { $in: planIds };
+    }
+    const page = Number(req.query.page ?? 1);
+    const limit = Number(req.query.limit ?? 20);
+    if (
+      !Number.isInteger(page) ||
+      page < 1 ||
+      page > 10_000 ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 50
+    ) {
+      throw createHttpError(400, 'INVALID_PAGINATION', 'Pagination values are invalid.');
+    }
+    const direction = req.query.sort === 'oldest' ? 1 : -1;
+    if (req.query.sort && !['newest', 'oldest'].includes(req.query.sort)) {
+      throw createHttpError(400, 'INVALID_RUN_FILTER', 'Run sort order is invalid.');
+    }
+    const [runs, total] = await Promise.all([
+      TestRun.find(filter)
+        .sort({ createdAt: direction, _id: direction })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      TestRun.countDocuments(filter),
+    ]);
+    return res.json({
+      runs,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
   } catch (error) {
     return next(error);
   }

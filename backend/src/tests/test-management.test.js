@@ -9,8 +9,8 @@ const mocks = vi.hoisted(() => ({
     findOneAndUpdate: vi.fn(),
     findOneAndDelete: vi.fn(),
   },
-  run: { exists: vi.fn(), find: vi.fn(), findOne: vi.fn() },
-  target: { findOne: vi.fn() },
+  run: { exists: vi.fn(), find: vi.fn(), findOne: vi.fn(), countDocuments: vi.fn() },
+  target: { findOne: vi.fn(), countDocuments: vi.fn() },
   startTestRun: vi.fn(),
   cancelTestRun: vi.fn(),
 }));
@@ -33,6 +33,14 @@ vi.mock('../models/target.js', () => ({
 }));
 vi.mock('../models/test-run.js', () => ({
   ACTIVE_RUN_STATUSES: ['QUEUED', 'RUNNING'],
+  RUN_STATUS: {
+    QUEUED: 'QUEUED',
+    RUNNING: 'RUNNING',
+    COMPLETED: 'COMPLETED',
+    CANCELLED: 'CANCELLED',
+    FAILED: 'FAILED',
+    INTERRUPTED: 'INTERRUPTED',
+  },
   TestRun: mocks.run,
 }));
 vi.mock('../services/test-runner.js', () => ({
@@ -71,11 +79,14 @@ function lean(value) {
 }
 
 function list(value) {
-  return {
-    sort: vi.fn().mockReturnValue({
-      limit: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(value) }),
-    }),
+  const query = {
+    sort: vi.fn(() => query),
+    skip: vi.fn(() => query),
+    limit: vi.fn(() => query),
+    select: vi.fn(() => query),
+    lean: vi.fn().mockResolvedValue(value),
   };
+  return query;
 }
 
 beforeEach(() => {
@@ -87,6 +98,7 @@ beforeEach(() => {
   mocks.plan.findOneAndDelete.mockResolvedValue({ _id: planId });
   mocks.run.exists.mockResolvedValue(false);
   mocks.run.find.mockReturnValue(list([]));
+  mocks.run.countDocuments.mockResolvedValue(0);
   mocks.run.findOne.mockReturnValue(lean({ _id: runId, owner: ownerA, status: 'COMPLETED' }));
   mocks.target.findOne.mockReturnValue(
     lean({
@@ -231,6 +243,27 @@ describe('test management API', () => {
     expect((await request(app).get(`/api/v1/runs?planId=${planId}`)).body.runs).toEqual([]);
     expect(mocks.run.findOne).toHaveBeenCalledWith({ _id: runId, owner: ownerA });
     expect(mocks.run.find).toHaveBeenCalledWith({ owner: ownerA, plan: planId });
+  });
+
+  it('filters, sorts and paginates owner-scoped run history', async () => {
+    mocks.run.countDocuments.mockResolvedValue(41);
+    const response = await request(createApp(config)).get(
+      '/api/v1/runs?status=COMPLETED&sort=oldest&page=2&limit=20',
+    );
+    expect(response.status).toBe(200);
+    expect(response.body.pagination).toEqual({ page: 2, limit: 20, total: 41, pages: 3 });
+    expect(mocks.run.find).toHaveBeenCalledWith({ owner: ownerA, status: 'COMPLETED' });
+    const historyQuery = mocks.run.find.mock.results.at(-1).value;
+    expect(historyQuery.sort).toHaveBeenCalledWith({ createdAt: 1, _id: 1 });
+    expect(historyQuery.skip).toHaveBeenCalledWith(20);
+    expect(historyQuery.limit).toHaveBeenCalledWith(20);
+  });
+
+  it('filters history through plans attached to an owned target', async () => {
+    const response = await request(createApp(config)).get(`/api/v1/runs?targetId=${targetId}`);
+    expect(response.status).toBe(200);
+    expect(mocks.plan.find).toHaveBeenCalledWith({ owner: ownerA, target: targetId });
+    expect(mocks.run.find).toHaveBeenCalledWith({ owner: ownerA, plan: { $in: [planId] } });
   });
 
   it('prevents deleting an owned plan with an active run', async () => {

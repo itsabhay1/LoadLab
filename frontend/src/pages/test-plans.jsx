@@ -119,7 +119,7 @@ function PlanForm({ plan, targets, onSaved, onClose }) {
           <label className="field field-wide">
             Target mode
             <select name="targetMode" value={values.targetMode} onChange={change}>
-              <option value="LOCAL">Development / Local Test Mode</option>
+              <option value="LOCAL">Local test mode</option>
               <option value="EXTERNAL">Verified external target</option>
             </select>
           </label>
@@ -134,7 +134,7 @@ function PlanForm({ plan, targets, onSaved, onClose }) {
                 onChange={change}
               />
               <small>
-                Development only: /fast, /slow, /variable or /flaky on the local mock server.
+                Local testing only: /fast, /slow, /variable or /flaky on the configured test server.
               </small>
             </label>
           ) : (
@@ -286,7 +286,7 @@ export function TestPlans() {
           <p className="eyebrow">TEST MANAGEMENT</p>
           <h1>Test plans</h1>
           <p className="page-subtitle">
-            Configure local development tests or APIs you have verified and control.
+            Configure local tests or APIs you have verified and control.
           </p>
         </div>
         <Button onClick={() => setEditor(DEFAULT_PLAN)}>
@@ -343,7 +343,7 @@ export function TestPlans() {
                 </div>
                 <CardTitle className="mt-4">{plan.name}</CardTitle>
                 <span className={`plan-mode ${plan.targetMode === 'EXTERNAL' ? 'external' : ''}`}>
-                  {plan.targetMode === 'EXTERNAL' ? 'VERIFIED EXTERNAL' : 'DEVELOPMENT / LOCAL'}
+                  {plan.targetMode === 'EXTERNAL' ? 'VERIFIED EXTERNAL' : 'LOCAL TEST'}
                 </span>
                 <code className="plan-target">{plan.targetUrl}</code>
               </CardHeader>

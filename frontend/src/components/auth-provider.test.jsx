@@ -61,10 +61,15 @@ beforeEach(() => {
   mocks.api.logout.mockResolvedValue();
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
 
 describe('AuthProvider', () => {
   it('keeps successful authentication in memory without using browser storage', async () => {
+    localStorage.setItem('loadlab-theme', 'dark');
     const storageSet = vi.spyOn(Storage.prototype, 'setItem');
     const storageGet = vi.spyOn(Storage.prototype, 'getItem');
     mocks.api.login.mockResolvedValue({ accessToken: 'signed-jwt', user });
@@ -82,6 +87,7 @@ describe('AuthProvider', () => {
     expect(mocks.api.logout).toHaveBeenCalledTimes(1);
     expect(mocks.setAccessToken).toHaveBeenLastCalledWith(undefined);
     expect(mocks.disconnectRunSockets).toHaveBeenCalled();
+    expect(localStorage.getItem('loadlab-theme')).toBe('dark');
   });
 
   it('restores authentication from the HttpOnly refresh session before rendering content', async () => {

@@ -3,7 +3,13 @@ import { Radio, StopCircle } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { MetricGrid, PageMessage, StatusBadge } from '../components/run-widgets';
+import {
+  GeneratorHealth,
+  MetricGrid,
+  PageMessage,
+  RequestDetails,
+  StatusBadge,
+} from '../components/run-widgets';
 import { MetricsChart } from '../components/metrics-chart';
 import { useLiveRun } from '../hooks/use-live-run';
 import { api } from '../services/api';
@@ -41,6 +47,7 @@ export function LiveRun() {
     );
   const active = ACTIVE_STATUSES.has(run?.status);
   const progress = runProgress(run);
+  const metrics = run?.liveMetrics ?? run?.finalMetrics ?? run?.snapshots?.at(-1)?.metrics;
   return (
     <div className="page-content">
       <div className="page-heading">
@@ -80,9 +87,10 @@ export function LiveRun() {
           <span style={{ width: `${progress}%` }} />
         </div>
       </div>
-      <MetricGrid
-        metrics={run?.liveMetrics ?? run?.finalMetrics ?? run?.snapshots?.at(-1)?.metrics}
-      />
+      <MetricGrid metrics={metrics} />
+      <div className="performance-detail-grid">
+        <RequestDetails metrics={metrics} />
+      </div>
       <Card className="live-chart-card">
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
@@ -97,6 +105,7 @@ export function LiveRun() {
           <MetricsChart run={run} />
         </CardContent>
       </Card>
+      <GeneratorHealth metrics={metrics} />
       {run?.reason && <PageMessage title="Run note">{run.reason}</PageMessage>}
     </div>
   );

@@ -50,7 +50,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe('Phase 6 verified-target workflow', () => {
+describe('verified-target workflow', () => {
   it('shows verification instructions, copies the token and verifies the target', async () => {
     api.verifyTarget.mockResolvedValue({
       target: { ...target, status: 'VERIFIED', verifiedAt: new Date().toISOString() },

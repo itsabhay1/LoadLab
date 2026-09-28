@@ -60,5 +60,7 @@ const testRunSchema = new mongoose.Schema(
 );
 
 testRunSchema.index({ owner: 1, createdAt: -1 });
+testRunSchema.index({ owner: 1, status: 1, createdAt: -1 });
+testRunSchema.index({ owner: 1, plan: 1, createdAt: -1 });
 
 export const TestRun = mongoose.models.TestRun ?? mongoose.model('TestRun', testRunSchema);

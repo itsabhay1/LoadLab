@@ -91,6 +91,49 @@ const runSchema = z
     reason: z.string().optional(),
   })
   .passthrough();
+const paginationSchema = z.object({
+  page: z.number().int().positive(),
+  limit: z.number().int().positive(),
+  total: z.number().int().nonnegative(),
+  pages: z.number().int().nonnegative(),
+});
+const comparisonRunSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    status: z.literal('COMPLETED'),
+    configuration: z.record(z.string(), z.any()),
+    metrics: z.record(z.string(), z.any()),
+    finalMetrics: z.record(z.string(), z.any()),
+    snapshots: z.array(
+      z.object({ capturedAt: z.string(), metrics: z.record(z.string(), z.any()) }),
+    ),
+  })
+  .passthrough();
+const comparisonSchema = z.object({
+  comparison: z.object({
+    runA: comparisonRunSchema,
+    runB: comparisonRunSchema,
+    deltas: z.record(z.string(), z.number().nullable()),
+  }),
+});
+const overviewSchema = z.object({
+  overview: z.object({
+    totals: z.object({
+      completedRuns: z.number().int().nonnegative(),
+      failedRuns: z.number().int().nonnegative(),
+      cancelledRuns: z.number().int().nonnegative(),
+      verifiedTargets: z.number().int().nonnegative(),
+    }),
+    recentRuns: z.array(z.record(z.string(), z.any())),
+    latestPerformance: z
+      .object({ runId: z.string(), rps: z.number(), p95LatencyMs: z.number() })
+      .nullable(),
+    recentPlans: z.array(
+      z.object({ planId: z.string(), name: z.string(), lastUsedAt: z.string() }),
+    ),
+  }),
+});
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = 'NETWORK_ERROR', requestId } = {}) {
@@ -139,6 +182,7 @@ export function createApiClient({
       credentials,
       authenticated = true,
       retryAccessToken = true,
+      responseType = 'json',
     } = {},
     retried = false,
   ) {
@@ -162,7 +206,7 @@ export function createApiClient({
         method,
         ...(credentials ? { credentials } : {}),
         headers: {
-          Accept: 'application/json',
+          Accept: responseType === 'blob' ? 'application/json, text/csv' : 'application/json',
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
@@ -170,6 +214,11 @@ export function createApiClient({
         signal: controller.signal,
       });
       if (response.status === 204) return undefined;
+      if (response.ok && responseType === 'blob') {
+        const disposition = response.headers.get('content-disposition') ?? '';
+        const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? 'loadlab-run';
+        return { blob: await response.blob(), filename };
+      }
       let data;
       try {
         data = await response.json();
@@ -194,7 +243,16 @@ export function createApiClient({
             if (!getToken?.()) throw new Error('Refresh did not return an access token.');
             return request(
               path,
-              { signal, schema, method, body, credentials, authenticated, retryAccessToken },
+              {
+                signal,
+                schema,
+                method,
+                body,
+                credentials,
+                authenticated,
+                retryAccessToken,
+                responseType,
+              },
               true,
             );
           } catch (refreshError) {
@@ -242,6 +300,12 @@ export function createApiClient({
           INVALID_HEADERS: 'One or more request headers are not allowed.',
           INVALID_REQUEST_BODY: 'The JSON request body is invalid or too large.',
           UNSUPPORTED_METHOD: 'The HTTP method is not supported.',
+          SAME_RUN_COMPARISON: 'Select two different runs.',
+          RUN_NOT_COMPLETED: 'Only completed runs can be used for this action.',
+          RUN_METRICS_UNAVAILABLE: 'Completed run metrics are unavailable.',
+          INVALID_EXPORT_FORMAT: 'Choose JSON or CSV export format.',
+          INVALID_RUN_FILTER: 'One or more history filters are invalid.',
+          INVALID_PAGINATION: 'History pagination values are invalid.',
           VALIDATION_ERROR: 'Please check the information you entered.',
         };
         throw new ApiError(
@@ -396,11 +460,30 @@ export function createApiClient({
       }),
     getRun: (runId, options) =>
       request(`/runs/${runId}`, { ...options, schema: z.object({ run: runSchema }) }),
-    listRuns: ({ planId, ...options } = {}) =>
-      request(`/runs${planId ? `?planId=${encodeURIComponent(planId)}` : ''}`, {
+    listRuns: ({ planId, targetId, status, sort, page, limit, ...options } = {}) => {
+      const query = new URLSearchParams();
+      if (planId) query.set('planId', planId);
+      if (targetId) query.set('targetId', targetId);
+      if (status) query.set('status', status);
+      if (sort) query.set('sort', sort);
+      if (page) query.set('page', String(page));
+      if (limit) query.set('limit', String(limit));
+      return request(`/runs${query.size ? `?${query}` : ''}`, {
         ...options,
-        schema: z.object({ runs: z.array(runSchema) }),
+        schema: z.object({ runs: z.array(runSchema), pagination: paginationSchema.optional() }),
+      });
+    },
+    compareRuns: (runA, runB, options) =>
+      request(`/runs/compare?runA=${encodeURIComponent(runA)}&runB=${encodeURIComponent(runB)}`, {
+        ...options,
+        schema: comparisonSchema,
       }),
+    exportRun: (runId, format, options) =>
+      request(`/runs/${runId}/export?format=${encodeURIComponent(format)}`, {
+        ...options,
+        responseType: 'blob',
+      }),
+    overview: (options) => request('/overview', { ...options, schema: overviewSchema }),
   };
 }
 

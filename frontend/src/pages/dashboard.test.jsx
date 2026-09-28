@@ -8,12 +8,13 @@ import { DashboardLayout } from '../components/dashboard-layout';
 import { Overview } from './overview';
 import { NotFound } from './not-found';
 import { api, ApiError } from '../services/api';
+import { ThemeProvider } from '../hooks/use-theme';
 
 vi.mock('../services/api', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
-    api: { health: vi.fn(), ready: vi.fn(), listPlans: vi.fn(), listRuns: vi.fn() },
+    api: { health: vi.fn(), ready: vi.fn(), overview: vi.fn() },
   };
 });
 vi.mock('../context/auth-context', () => ({
@@ -26,48 +27,60 @@ afterEach(() => {
 });
 function renderApp(path = '/') {
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route element={<DashboardLayout />}>
-          <Route index element={<Overview />} />
-          <Route path="*" element={<NotFound />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <ThemeProvider>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route element={<DashboardLayout />}>
+            <Route index element={<Overview />} />
+            <Route path="*" element={<NotFound />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </ThemeProvider>,
   );
 }
 describe('dashboard', () => {
   beforeEach(() => {
-    api.listPlans.mockResolvedValue({ plans: [] });
-    api.listRuns.mockResolvedValue({ runs: [] });
+    api.overview.mockResolvedValue({
+      overview: {
+        totals: { completedRuns: 0, failedRuns: 0, cancelledRuns: 0, verifiedTargets: 0 },
+        recentRuns: [],
+        latestPerformance: null,
+        recentPlans: [],
+      },
+    });
   });
   it('shows initial loading then real successful connection results', async () => {
     api.health.mockResolvedValue({ status: 'ok' });
     api.ready.mockResolvedValue({ status: 'ready' });
     renderApp();
-    expect(screen.getByRole('button', { name: 'Checking services…' })).toBeDisabled();
-    expect(await screen.findByText('All systems ready')).toBeInTheDocument();
-    expect(screen.getAllByText('Connected')).toHaveLength(2);
+    expect(screen.getByText('Checking system')).toBeInTheDocument();
+    expect(await screen.findByText('System operational')).toBeInTheDocument();
+    expect(screen.queryByText('Service connections')).not.toBeInTheDocument();
+    expect(screen.queryByText('/api/v1/health')).not.toBeInTheDocument();
+    expect(screen.queryByText('/api/v1/ready')).not.toBeInTheDocument();
+    expect(screen.getByText('Load test verified APIs with confidence.')).toBeInTheDocument();
+    expect(screen.queryByText(/Phase/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Setup guide')).not.toBeInTheDocument();
     expect(screen.getByText('No runs yet')).toBeInTheDocument();
   });
-  it('shows failures and lets the user retry successfully', async () => {
+  it('shows service failures in the compact status indicator', async () => {
     api.health.mockRejectedValue(new ApiError('Cannot reach the API.'));
     api.ready.mockRejectedValue(
       new ApiError('Database unavailable.', { requestId: 'request-123' }),
     );
     renderApp();
-    expect(await screen.findByText('API disconnected')).toBeInTheDocument();
-    expect(screen.getByText('Request ID: request-123')).toBeInTheDocument();
-    api.health.mockResolvedValue({ status: 'ok' });
-    api.ready.mockResolvedValue({ status: 'ready' });
-    await userEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
-    expect(await screen.findByText('All systems ready')).toBeInTheDocument();
+    expect(await screen.findByText('Service issue')).toBeInTheDocument();
+    expect(screen.getByLabelText(/API: Unavailable/)).toHaveAttribute(
+      'title',
+      'API: Unavailable · Database: Unavailable',
+    );
   });
   it('distinguishes a live process from database readiness', async () => {
     api.health.mockResolvedValue({ status: 'ok' });
     api.ready.mockRejectedValue(new ApiError('Database unavailable.'));
     renderApp();
-    expect(await screen.findByText('API online · database unavailable')).toBeInTheDocument();
+    expect(await screen.findByText('Service issue')).toBeInTheDocument();
   });
   it('supports an accessible persistent theme toggle and mobile navigation', async () => {
     api.health.mockResolvedValue({ status: 'ok' });
@@ -81,7 +94,7 @@ describe('dashboard', () => {
       'aria-expanded',
       'true',
     );
-    await waitFor(() => expect(screen.getByText('All systems ready')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('System operational')).toBeInTheDocument());
   });
   it('renders a not-found page for unknown routes', async () => {
     api.health.mockResolvedValue({ status: 'ok' });
@@ -91,6 +104,6 @@ describe('dashboard', () => {
       screen.getByRole('heading', { name: 'A little off the test path.' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Back to overview' })).toHaveAttribute('href', '/');
-    await screen.findByText('All systems ready');
+    await screen.findByText('System operational');
   });
 });
