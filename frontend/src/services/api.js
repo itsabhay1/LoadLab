@@ -2,6 +2,24 @@ import { z } from 'zod';
 
 const API_PREFIX = '/api/v1';
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+let accessToken;
+let unauthorizedHandler;
+
+export function setAccessToken(token) {
+  accessToken = token;
+}
+
+export function getAccessToken() {
+  return accessToken;
+}
+
+export function setUnauthorizedHandler(handler) {
+  unauthorizedHandler = handler;
+}
+
+export function notifyUnauthorized() {
+  unauthorizedHandler?.();
+}
 const healthSchema = z.object({
   status: z.literal('ok'),
   service: z.literal('loadlab-api'),
@@ -12,6 +30,8 @@ const readinessSchema = z.object({
   status: z.literal('ready'),
   checks: z.object({ database: z.literal('connected') }),
 });
+const userSchema = z.object({ id: z.string(), name: z.string(), email: z.email() });
+const authSchema = z.object({ accessToken: z.string().min(1), user: userSchema });
 const planSchema = z
   .object({
     _id: z.string(),
@@ -66,7 +86,11 @@ export function createApiClient({
   baseUrl = '',
   timeoutMs = 7000,
   fetchImpl = globalThis.fetch,
+  getToken = getAccessToken,
+  setToken = setAccessToken,
+  onUnauthorized = notifyUnauthorized,
 } = {}) {
+  let refreshPromise;
   const base = baseUrl.trim().replace(/\/$/, '');
   const validBase =
     !base ||
@@ -85,7 +109,19 @@ export function createApiClient({
       }
     })();
 
-  async function request(path, { signal, schema, method = 'GET', body } = {}) {
+  async function request(
+    path,
+    {
+      signal,
+      schema,
+      method = 'GET',
+      body,
+      credentials,
+      authenticated = true,
+      retryAccessToken = true,
+    } = {},
+    retried = false,
+  ) {
     if (!validBase)
       throw new ApiError(
         'VITE_API_BASE_URL must be an HTTP(S) URL without credentials, query or fragment.',
@@ -101,11 +137,14 @@ export function createApiClient({
       controller.abort();
     }, timeoutMs);
     try {
+      const token = authenticated ? getToken?.() : undefined;
       const response = await fetchImpl(`${base}${API_PREFIX}${path}`, {
         method,
+        ...(credentials ? { credentials } : {}),
         headers: {
           Accept: 'application/json',
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: controller.signal,
@@ -122,13 +161,58 @@ export function createApiClient({
         });
       }
       if (!response.ok) {
+        const errorCode = data?.error?.code ?? 'HTTP_ERROR';
+        if (
+          response.status === 401 &&
+          errorCode === 'TOKEN_EXPIRED' &&
+          token &&
+          retryAccessToken &&
+          !retried
+        ) {
+          try {
+            if (getToken?.() === token) await refreshSession();
+            if (!getToken?.()) throw new Error('Refresh did not return an access token.');
+            return request(
+              path,
+              { signal, schema, method, body, credentials, authenticated, retryAccessToken },
+              true,
+            );
+          } catch (refreshError) {
+            setToken?.(undefined);
+            onUnauthorized?.();
+            throw refreshError;
+          }
+        }
+        if (response.status === 401 && token && authenticated) {
+          setToken?.(undefined);
+          onUnauthorized?.();
+        }
+        const safeMessages = {
+          INVALID_CREDENTIALS: 'Email or password is incorrect.',
+          EMAIL_EXISTS: 'An account with this email already exists.',
+          ACCOUNT_METHOD_CONFLICT:
+            'An account with this email already exists. Sign in using its existing method.',
+          TOKEN_EXPIRED: 'Your session has expired. Please sign in again.',
+          AUTH_REQUIRED: 'Please sign in to continue.',
+          INVALID_TOKEN: 'Your session is invalid. Please sign in again.',
+          USER_UNAVAILABLE: 'Your account is unavailable.',
+          GOOGLE_TOKEN_INVALID: 'Google authentication could not be verified.',
+          GOOGLE_EMAIL_UNVERIFIED: 'The Google email is not verified.',
+          GOOGLE_NOT_CONFIGURED: 'Google Sign-In is not configured.',
+          AUTH_RATE_LIMITED: 'Too many authentication attempts. Try again later.',
+          REFRESH_REQUIRED: 'No refresh session is available.',
+          REFRESH_EXPIRED: 'Your refresh session has expired.',
+          INVALID_REFRESH_TOKEN: 'Your refresh session is invalid.',
+          VALIDATION_ERROR: 'Please check the information you entered.',
+        };
         throw new ApiError(
-          response.status === 503
-            ? 'Database unavailable or service shutting down.'
-            : `API request failed (HTTP ${response.status}).`,
+          safeMessages[errorCode] ??
+            (response.status === 503
+              ? 'Database unavailable or service shutting down.'
+              : `API request failed (HTTP ${response.status}).`),
           {
             status: response.status,
-            code: data?.error?.code ?? 'HTTP_ERROR',
+            code: errorCode,
             requestId: response.headers.get('x-request-id') ?? data?.error?.requestId,
           },
         );
@@ -153,10 +237,74 @@ export function createApiClient({
       signal?.removeEventListener('abort', abort);
     }
   }
+
+  function refreshSession(options = {}) {
+    if (!refreshPromise) {
+      refreshPromise = request('/auth/refresh', {
+        ...options,
+        method: 'POST',
+        credentials: 'include',
+        authenticated: false,
+        retryAccessToken: false,
+        schema: authSchema,
+      })
+        .then((response) => {
+          setToken?.(response.accessToken);
+          return response;
+        })
+        .finally(() => {
+          refreshPromise = undefined;
+        });
+    }
+    return refreshPromise;
+  }
+
   return {
     request,
-    health: (options) => request('/health', { ...options, schema: healthSchema }),
-    ready: (options) => request('/ready', { ...options, schema: readinessSchema }),
+    health: (options) =>
+      request('/health', { ...options, authenticated: false, schema: healthSchema }),
+    ready: (options) =>
+      request('/ready', { ...options, authenticated: false, schema: readinessSchema }),
+    register: (credentials, options) =>
+      request('/auth/register', {
+        ...options,
+        method: 'POST',
+        credentials: 'include',
+        authenticated: false,
+        retryAccessToken: false,
+        body: credentials,
+        schema: authSchema,
+      }),
+    login: (credentials, options) =>
+      request('/auth/login', {
+        ...options,
+        method: 'POST',
+        credentials: 'include',
+        authenticated: false,
+        retryAccessToken: false,
+        body: credentials,
+        schema: authSchema,
+      }),
+    googleLogin: (credential, options) =>
+      request('/auth/google', {
+        ...options,
+        method: 'POST',
+        credentials: 'include',
+        authenticated: false,
+        retryAccessToken: false,
+        body: { credential },
+        schema: authSchema,
+      }),
+    refresh: (options) => refreshSession(options),
+    logout: (options) =>
+      request('/auth/logout', {
+        ...options,
+        method: 'POST',
+        credentials: 'include',
+        authenticated: false,
+        retryAccessToken: false,
+      }),
+    me: (options) => request('/auth/me', { ...options, schema: z.object({ user: userSchema }) }),
     listPlans: (options) =>
       request('/plans', { ...options, schema: z.object({ plans: z.array(planSchema) }) }),
     getPlan: (planId, options) =>

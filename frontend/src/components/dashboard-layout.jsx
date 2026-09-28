@@ -9,6 +9,7 @@ import {
   Menu,
   Moon,
   Sun,
+  LogOut,
   X,
 } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
@@ -16,11 +17,13 @@ import { useState } from 'react';
 import { Button } from './ui/button';
 import { useTheme } from '../hooks/use-theme';
 import { useServiceStatus } from '../hooks/use-service-status';
+import { useAuth } from '../context/auth-context';
 
 export function DashboardLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const status = useServiceStatus();
+  const { user, logout } = useAuth();
   const connected = status.health?.status === 'fulfilled';
   const ready = connected && status.ready?.status === 'fulfilled';
   const connectionLabel = !status.checkedAt
@@ -131,9 +134,13 @@ export function DashboardLayout() {
             >
               {theme === 'dark' ? <Sun /> : <Moon />}
             </Button>
-            <div className="profile-avatar" aria-label="Local workspace">
-              L
+            <span className="user-name">{user.name}</span>
+            <div className="profile-avatar" aria-label={`${user.name}'s account`}>
+              {user.name.charAt(0).toUpperCase()}
             </div>
+            <Button variant="ghost" size="icon" aria-label="Log out" onClick={logout}>
+              <LogOut />
+            </Button>
           </div>
         </header>
         <main id="main" tabIndex={-1}>

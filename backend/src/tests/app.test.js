@@ -74,6 +74,7 @@ describe('HTTP foundation', () => {
   it('allows the configured frontend and exposes request IDs', async () => {
     const res = await request(setup()).get('/api/v1/health').set('Origin', config.CLIENT_URL);
     expect(res.headers['access-control-allow-origin']).toBe(config.CLIENT_URL);
+    expect(res.headers['access-control-allow-credentials']).toBe('true');
     expect(res.headers['access-control-expose-headers']).toBe('X-Request-ID');
     const preflight = await request(setup())
       .options('/api/v1/health')

@@ -35,6 +35,7 @@ const snapshotSchema = new mongoose.Schema(
 
 const testRunSchema = new mongoose.Schema(
   {
+    owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     plan: { type: mongoose.Schema.Types.ObjectId, ref: 'TestPlan', required: true, index: true },
     configurationSnapshot: { type: configurationSchema, required: true },
     status: {
@@ -53,5 +54,7 @@ const testRunSchema = new mongoose.Schema(
   },
   { timestamps: true, versionKey: false },
 );
+
+testRunSchema.index({ owner: 1, createdAt: -1 });
 
 export const TestRun = mongoose.models.TestRun ?? mongoose.model('TestRun', testRunSchema);

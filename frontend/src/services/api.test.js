@@ -75,6 +75,114 @@ describe('API client', () => {
     await expect(result).rejects.toMatchObject({ name: 'AbortError' });
   });
 
+  it('refreshes an expired access token and retries the original request once', async () => {
+    let token = 'expired-access';
+    const onUnauthorized = vi.fn();
+    const user = { id: 'user-1', name: 'Ada', email: 'ada@example.com' };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: 'TOKEN_EXPIRED' } }), { status: 401 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ accessToken: 'fresh-access', user }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ user }), { status: 200 }));
+    const client = createApiClient({
+      fetchImpl,
+      getToken: () => token,
+      setToken: (value) => {
+        token = value;
+      },
+      onUnauthorized,
+    });
+    await expect(client.me()).resolves.toEqual({ user });
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/auth/me',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer expired-access' }),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/auth/refresh',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      '/api/v1/auth/me',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer fresh-access' }),
+      }),
+    );
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('logs out cleanly when refreshing an expired access token fails', async () => {
+    let token = 'expired-access';
+    const onUnauthorized = vi.fn();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: 'TOKEN_EXPIRED' } }), { status: 401 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: 'REFRESH_REQUIRED' } }), { status: 401 }),
+      );
+    const client = createApiClient({
+      fetchImpl,
+      getToken: () => token,
+      setToken: (value) => {
+        token = value;
+      },
+      onUnauthorized,
+    });
+    await expect(client.me()).rejects.toMatchObject({ code: 'REFRESH_REQUIRED' });
+    expect(token).toBeUndefined();
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses one refresh request for concurrent expired-token responses', async () => {
+    let token = 'expired-access';
+    let releaseRefresh;
+    let refreshCalls = 0;
+    const user = { id: 'user-1', name: 'Ada', email: 'ada@example.com' };
+    const refreshResponse = new Promise((resolve) => {
+      releaseRefresh = () =>
+        resolve(new Response(JSON.stringify({ accessToken: 'fresh-access', user })));
+    });
+    const fetchImpl = vi.fn((url, options) => {
+      if (url.endsWith('/auth/refresh')) {
+        refreshCalls += 1;
+        return refreshResponse;
+      }
+      if (options.headers.Authorization === 'Bearer expired-access') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: { code: 'TOKEN_EXPIRED' } }), { status: 401 }),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({ user })));
+    });
+    const client = createApiClient({
+      fetchImpl,
+      getToken: () => token,
+      setToken: (value) => {
+        token = value;
+      },
+    });
+    const requests = [client.me(), client.me()];
+    await vi.waitFor(() => expect(refreshCalls).toBe(1));
+    releaseRefresh();
+    await expect(Promise.all(requests)).resolves.toEqual([{ user }, { user }]);
+    expect(refreshCalls).toBe(1);
+  });
+
   it('sends plan mutations and execution requests to the REST API', async () => {
     const plan = {
       _id: '507f1f77bcf86cd799439011',

@@ -16,6 +16,9 @@ vi.mock('../services/api', async (importOriginal) => {
     api: { health: vi.fn(), ready: vi.fn(), listPlans: vi.fn(), listRuns: vi.fn() },
   };
 });
+vi.mock('../context/auth-context', () => ({
+  useAuth: () => ({ user: { name: 'Test User', email: 'test@example.com' }, logout: vi.fn() }),
+}));
 afterEach(() => {
   cleanup();
   localStorage.clear();

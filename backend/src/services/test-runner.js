@@ -134,18 +134,19 @@ async function executeRun(runId, configuration, mockServerOrigin, execution) {
   }
 }
 
-export async function startTestRun(planId, mockServerOrigin) {
+export async function startTestRun(planId, ownerId, mockServerOrigin) {
   if (starting || activeExecution) {
     throw serviceError(409, 'TEST_ALREADY_ACTIVE', 'Another test is already active.');
   }
   starting = true;
 
   try {
-    const plan = await TestPlan.findById(planId).lean();
+    const plan = await TestPlan.findOne({ _id: planId, owner: ownerId }).lean();
     if (!plan) throw serviceError(404, 'PLAN_NOT_FOUND', 'Test plan was not found.');
     const configuration = snapshotPlan(plan);
     const run = await TestRun.create({
       plan: plan._id,
+      owner: ownerId,
       configurationSnapshot: configuration,
       status: RUN_STATUS.QUEUED,
       queuedAt: new Date(),
@@ -154,6 +155,7 @@ export async function startTestRun(planId, mockServerOrigin) {
       runId: String(run._id),
       controller: new AbortController(),
       cancellationReason: undefined,
+      ownerId: String(ownerId),
     };
     activeExecution = execution;
     publishRunUpdate(execution.runId, RUN_STATUS.QUEUED, {
@@ -168,14 +170,17 @@ export async function startTestRun(planId, mockServerOrigin) {
   }
 }
 
-export async function cancelTestRun(runId) {
+export async function cancelTestRun(runId, ownerId) {
   if (activeExecution?.runId === String(runId)) {
+    if (activeExecution.ownerId !== String(ownerId)) {
+      throw serviceError(404, 'RUN_NOT_FOUND', 'Test run was not found.');
+    }
     activeExecution.cancellationReason = 'Cancelled by user.';
     activeExecution.controller.abort();
     return;
   }
 
-  const run = await TestRun.findById(runId).lean();
+  const run = await TestRun.findOne({ _id: runId, owner: ownerId }).lean();
   if (!run) throw serviceError(404, 'RUN_NOT_FOUND', 'Test run was not found.');
   if (!ACTIVE_RUN_STATUSES.includes(run.status)) {
     throw serviceError(409, 'RUN_NOT_ACTIVE', 'Test run is not active.');

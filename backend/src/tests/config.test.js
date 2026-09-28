@@ -4,6 +4,8 @@ import { parseEnv } from '../config/env.js';
 const valid = {
   MONGODB_URI: 'mongodb://localhost:27017/loadlab',
   CLIENT_URL: 'http://localhost:5173',
+  JWT_ACCESS_SECRET: 'access-secret-that-is-at-least-32-characters',
+  JWT_REFRESH_SECRET: 'refresh-secret-that-is-at-least-32-characters',
 };
 describe('environment validation', () => {
   it('parses defaults and a valid Atlas URI', () => {
@@ -11,6 +13,8 @@ describe('environment validation', () => {
       PORT: 5000,
       NODE_ENV: 'development',
       MOCK_SERVER_URL: 'http://127.0.0.1:5050',
+      JWT_ACCESS_EXPIRES_IN: '15m',
+      JWT_REFRESH_EXPIRES_IN: '7d',
     });
     expect(
       parseEnv({
@@ -34,6 +38,7 @@ describe('environment validation', () => {
     { CLIENT_URL: 'http://user:secret@localhost:5173' },
     { MOCK_SERVER_URL: 'https://example.com' },
     { MOCK_SERVER_URL: 'http://127.0.0.1:5050/fast' },
+    { JWT_REFRESH_SECRET: valid.JWT_ACCESS_SECRET },
   ])('rejects invalid config %j without including values', (override) => {
     expect(() => parseEnv({ ...valid, ...override })).toThrow(/Invalid environment configuration/);
     try {
@@ -43,6 +48,8 @@ describe('environment validation', () => {
     }
   });
   it('requires database URI and client origin', () => {
-    expect(() => parseEnv({})).toThrow('MONGODB_URI, CLIENT_URL');
+    expect(() => parseEnv({})).toThrow(
+      'MONGODB_URI, CLIENT_URL, JWT_ACCESS_SECRET, JWT_REFRESH_SECRET',
+    );
   });
 });

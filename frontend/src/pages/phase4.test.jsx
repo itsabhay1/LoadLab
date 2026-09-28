@@ -27,7 +27,10 @@ vi.mock('../services/api', async (importOriginal) => {
     },
   };
 });
-vi.mock('../services/socket', () => ({ createRunSocket: vi.fn() }));
+vi.mock('../services/socket', () => ({
+  createRunSocket: vi.fn(),
+  releaseRunSocket: (socket) => socket.disconnect(),
+}));
 
 const plan = {
   _id: '507f1f77bcf86cd799439011',

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  planFindById: vi.fn(),
+  planFindOne: vi.fn(),
   runCreate: vi.fn(),
-  runFindById: vi.fn(),
+  runFindOne: vi.fn(),
   runFindOneAndUpdate: vi.fn(),
   runUpdateOne: vi.fn(),
   runUpdateMany: vi.fn(),
@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../models/test-plan.js', () => ({
-  TestPlan: { findById: mocks.planFindById },
+  TestPlan: { findOne: mocks.planFindOne },
 }));
 vi.mock('../models/test-run.js', () => ({
   RUN_STATUS: {
@@ -26,7 +26,7 @@ vi.mock('../models/test-run.js', () => ({
   ACTIVE_RUN_STATUSES: ['QUEUED', 'RUNNING'],
   TestRun: {
     create: mocks.runCreate,
-    findById: mocks.runFindById,
+    findOne: mocks.runFindOne,
     findOneAndUpdate: mocks.runFindOneAndUpdate,
     updateOne: mocks.runUpdateOne,
     updateMany: mocks.runUpdateMany,
@@ -40,6 +40,7 @@ vi.mock('../config/logger.js', () => ({
 
 const planId = '507f1f77bcf86cd799439011';
 const runId = '507f1f77bcf86cd799439012';
+const ownerId = '507f1f77bcf86cd799439010';
 const plan = {
   _id: planId,
   name: 'Plan',
@@ -63,9 +64,9 @@ const metrics = {
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
-  mocks.planFindById.mockReturnValue({ lean: vi.fn().mockResolvedValue(plan) });
+  mocks.planFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(plan) });
   mocks.runCreate.mockResolvedValue({ _id: runId, status: 'QUEUED' });
-  mocks.runFindById.mockReturnValue({
+  mocks.runFindOne.mockReturnValue({
     lean: vi.fn().mockResolvedValue({ _id: runId, status: 'COMPLETED' }),
   });
   mocks.runFindOneAndUpdate.mockImplementation(async (_filter, update) => ({
@@ -88,8 +89,12 @@ describe('test runner persistence', () => {
       return metrics;
     });
     const service = await runner();
-    const queued = await service.startTestRun(planId, 'http://127.0.0.1:5050');
+    const queued = await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
     expect(queued.status).toBe('QUEUED');
+    expect(mocks.planFindOne).toHaveBeenCalledWith({ _id: planId, owner: ownerId });
+    expect(mocks.runCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ plan: planId, owner: ownerId, status: 'QUEUED' }),
+    );
 
     await vi.waitFor(() =>
       expect(mocks.runFindOneAndUpdate).toHaveBeenCalledWith(
@@ -120,7 +125,7 @@ describe('test runner persistence', () => {
     const service = await runner();
     const updates = [];
     service.testRunEvents.on('run:update', (update) => updates.push(update));
-    await service.startTestRun(planId, 'http://127.0.0.1:5050');
+    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
     await vi.waitFor(() => expect(service.hasActiveTest()).toBe(false));
     expect(mocks.runUpdateOne).toHaveBeenCalledOnce();
     expect(updates.filter((update) => update.metrics?.elapsedMs)).toHaveLength(2);
@@ -137,9 +142,38 @@ describe('test runner persistence', () => {
       }),
     );
     const service = await runner();
-    await service.startTestRun(planId, 'http://127.0.0.1:5050');
-    await expect(service.startTestRun(planId, 'http://127.0.0.1:5050')).rejects.toMatchObject({
+    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
+    await expect(
+      service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050'),
+    ).rejects.toMatchObject({
       code: 'TEST_ALREADY_ACTIVE',
+    });
+    finish(metrics);
+    await vi.waitFor(() => expect(service.hasActiveTest()).toBe(false));
+  });
+
+  it('cannot start another user or unowned plan', async () => {
+    mocks.planFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(null) });
+    const service = await runner();
+    await expect(
+      service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050'),
+    ).rejects.toMatchObject({ status: 404, code: 'PLAN_NOT_FOUND' });
+    expect(mocks.planFindOne).toHaveBeenCalledWith({ _id: planId, owner: ownerId });
+    expect(mocks.runCreate).not.toHaveBeenCalled();
+  });
+
+  it('cannot cancel another user active run', async () => {
+    let finish;
+    mocks.runLoadTest.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const service = await runner();
+    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
+    await expect(service.cancelTestRun(runId, '507f1f77bcf86cd799439099')).rejects.toMatchObject({
+      status: 404,
+      code: 'RUN_NOT_FOUND',
     });
     finish(metrics);
     await vi.waitFor(() => expect(service.hasActiveTest()).toBe(false));
@@ -155,9 +189,9 @@ describe('test runner persistence', () => {
         }),
     );
     const service = await runner();
-    await service.startTestRun(planId, 'http://127.0.0.1:5050');
+    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
     await vi.waitFor(() => expect(mocks.runLoadTest).toHaveBeenCalled());
-    await service.cancelTestRun(runId);
+    await service.cancelTestRun(runId, ownerId);
     await vi.waitFor(() =>
       expect(mocks.runFindOneAndUpdate).toHaveBeenCalledWith(
         expect.anything(),
@@ -170,7 +204,7 @@ describe('test runner persistence', () => {
   it('persists engine failures as FAILED without exposing the error message', async () => {
     mocks.runLoadTest.mockRejectedValue(new TypeError('secret target failure'));
     const service = await runner();
-    await service.startTestRun(planId, 'http://127.0.0.1:5050');
+    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
     await vi.waitFor(() =>
       expect(mocks.runFindOneAndUpdate).toHaveBeenCalledWith(
         expect.anything(),
@@ -191,7 +225,7 @@ describe('test runner persistence', () => {
       return { _id: runId, status: update.$set.status };
     });
     const service = await runner();
-    await service.startTestRun(planId, 'http://127.0.0.1:5050');
+    await service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050');
     await vi.waitFor(() =>
       expect(mocks.runFindOneAndUpdate).toHaveBeenCalledWith(
         expect.anything(),
@@ -215,7 +249,7 @@ describe('test runner persistence', () => {
   it('propagates initial database failures without reserving the runner', async () => {
     mocks.runCreate.mockRejectedValueOnce(new Error('database unavailable'));
     const service = await runner();
-    await expect(service.startTestRun(planId, 'http://127.0.0.1:5050')).rejects.toThrow(
+    await expect(service.startTestRun(planId, ownerId, 'http://127.0.0.1:5050')).rejects.toThrow(
       'database unavailable',
     );
     expect(service.hasActiveTest()).toBe(false);

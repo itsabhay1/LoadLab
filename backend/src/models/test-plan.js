@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 const testPlanSchema = new mongoose.Schema(
   {
+    owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     name: { type: String, required: true, trim: true, minlength: 1, maxlength: 100 },
     targetUrl: { type: String, required: true },
     virtualUsers: { type: Number, required: true, min: 1, max: 1000 },
@@ -13,5 +14,7 @@ const testPlanSchema = new mongoose.Schema(
   },
   { timestamps: true, versionKey: false },
 );
+
+testPlanSchema.index({ owner: 1, createdAt: -1 });
 
 export const TestPlan = mongoose.models.TestPlan ?? mongoose.model('TestPlan', testPlanSchema);

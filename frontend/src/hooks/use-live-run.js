@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { createRunSocket } from '../services/socket';
+import { createRunSocket, releaseRunSocket } from '../services/socket';
 
 export function useLiveRun(runId) {
   const [run, setRun] = useState();
@@ -61,7 +61,7 @@ export function useLiveRun(runId) {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('run:update', onUpdate);
-      socket.disconnect();
+      releaseRunSocket(socket);
     };
   }, [runId, synchronize]);
 

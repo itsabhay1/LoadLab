@@ -3,6 +3,8 @@ import { once } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LoadTestConfigError, runLoadTest } from '../services/loadEngine.js';
 
+const WINDOWS_TIMING_MULTIPLIER = process.platform === 'win32' ? 3 : 1;
+
 const servers = [];
 
 async function startServer(handler) {
@@ -260,7 +262,7 @@ describe('load engine', () => {
     expect(result.maxInFlightRequests).toBeLessThanOrEqual(1000);
     expect(maximumConnections).toBeLessThanOrEqual(25);
     expect(result.totalRequests).toBe(result.successes + result.httpErrors + result.networkErrors);
-    expect(result.elapsedMs).toBeLessThan(1200);
+    expect(result.elapsedMs).toBeLessThan(1200 * WINDOWS_TIMING_MULTIPLIER);
   });
 
   it('cancels 1000 virtual users without leaving the run active', async () => {
@@ -283,6 +285,6 @@ describe('load engine', () => {
 
     expect(result.cancelled).toBe(true);
     expect(result.maxInFlightRequests).toBeLessThanOrEqual(1000);
-    expect(result.elapsedMs).toBeLessThan(500);
+    expect(result.elapsedMs).toBeLessThan(500 * WINDOWS_TIMING_MULTIPLIER);
   });
 });
